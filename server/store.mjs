@@ -15,6 +15,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, source TEXT NOT NULL, payload TEXT NOT NULL, todos TEXT NOT NULL DEFAULT '[]', revision INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS events (thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, seq INTEGER NOT NULL, event_id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(thread_id,event_id), UNIQUE(thread_id,seq));
       CREATE TABLE IF NOT EXISTS imports (thread_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS deliveries (bot_id TEXT NOT NULL, delivery_id TEXT NOT NULL, thread_id TEXT NOT NULL, PRIMARY KEY(bot_id,delivery_id));
+      CREATE TABLE IF NOT EXISTS heartbeats (bot_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
       INSERT OR IGNORE INTO meta VALUES ('revision',0);`);
   }
@@ -30,6 +32,10 @@ export class Store {
   }
   upsert(thread, todos) {
     const current = this.db.prepare('SELECT payload,todos FROM threads WHERE id=?').get(thread.id);
+    if (current && thread.historyVersion === undefined) {
+      const historyVersion = JSON.parse(current.payload).historyVersion;
+      if (historyVersion !== undefined) thread = { ...thread, historyVersion };
+    }
     const payload = JSON.stringify(thread);
     const todoText = todos === undefined ? current?.todos ?? '[]' : JSON.stringify(todos);
     if (current?.payload === payload && current?.todos === todoText) return;
@@ -54,6 +60,35 @@ export class Store {
     this.db.prepare('DELETE FROM events WHERE thread_id=?').run(id);
     this.db.prepare("UPDATE threads SET todos='[]' WHERE id=?").run(id);
     this.bump(id);
+  }
+  ingest(thread, events, todos, delivery) {
+    return this.transaction(() => {
+      if (delivery) {
+        const previous = this.db.prepare('SELECT thread_id FROM deliveries WHERE bot_id=? AND delivery_id=?').get(thread.botId, delivery.id);
+        if (previous) return previous.thread_id;
+        if (delivery.reset) {
+          this.reset(thread.id);
+          thread = { ...thread, historyVersion: delivery.id };
+        }
+      }
+      this.upsert(thread, todos);
+      this.append(thread.id, events);
+      if (delivery) this.db.prepare('INSERT INTO deliveries VALUES(?,?,?)').run(thread.botId, delivery.id, thread.id);
+      return thread.id;
+    });
+  }
+  recordHeartbeat(heartbeat, receivedAt) {
+    this.transaction(() => {
+      const payload = JSON.stringify({ id: `ingest:${heartbeat.botId}`, name: heartbeat.botName, status: heartbeat.status, lastSeenAt: receivedAt, pendingBatches: heartbeat.pendingBatches, ...(heartbeat.error ? { error: heartbeat.error } : {}) });
+      this.db.prepare('INSERT INTO heartbeats VALUES(?,?) ON CONFLICT(bot_id) DO UPDATE SET payload=excluded.payload').run(heartbeat.botId, payload);
+      this.db.prepare("UPDATE meta SET value=value+1 WHERE key='revision'").run();
+    });
+  }
+  collectorSources(now = Date.now()) {
+    return this.db.prepare('SELECT payload FROM heartbeats ORDER BY bot_id').all().map(row => {
+      const source = JSON.parse(row.payload);
+      return now - source.lastSeenAt >= 45_000 ? { ...source, status: 'offline' } : source;
+    });
   }
   checkpoint(id) {
     const row = this.db.prepare('SELECT payload FROM imports WHERE thread_id=?').get(id);

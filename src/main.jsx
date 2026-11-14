@@ -149,6 +149,7 @@ function useThread(id, session, paused, cache) {
         const knownIds = new Set((cache.current.get(id)?.events || []).map(event => event.id));
         const result = await api(`/api/threads/${encodeURIComponent(id)}?limit=100`, { token: session.token, signal: controller.signal });
         if (requestVersion.current !== version || controller.signal.aborted) return;
+        if ((cache.current.get(id)?.thread?.historyVersion ?? null) !== (result.thread?.historyVersion ?? null)) knownIds.clear();
         const pages = [result.events];
         let page = result;
         // A busy thread may advance by several pages while paused or between polls.
@@ -156,15 +157,17 @@ function useThread(id, session, paused, cache) {
         while (knownIds.size && page.nextCursor && !page.events.some(event => knownIds.has(event.id))) {
           page = await api(`/api/threads/${encodeURIComponent(id)}?before=${encodeURIComponent(page.nextCursor)}&limit=100`, { token: session.token, signal: controller.signal });
           if (requestVersion.current !== version || controller.signal.aborted) return;
+          if ((page.thread?.historyVersion ?? null) !== (result.thread?.historyVersion ?? null)) return;
           pages.push(page.events);
         }
         const incoming = pages.reverse().flat();
         setState(previous => {
           if (requestVersion.current !== version || controller.signal.aborted) return previous;
-          const next = { ...result, events: mergeEvents(previous.events || [], incoming),
-            nextCursor: previous.events?.length ? previous.nextCursor : result.nextCursor,
-            olderLoading: previous.olderLoading || false,
-            olderError: previous.olderError, loading: false, error: null, checkedAt: Date.now(), id };
+          const replaced = (previous.thread?.historyVersion ?? null) !== (result.thread?.historyVersion ?? null);
+          const next = { ...result, events: mergeEvents(replaced ? [] : previous.events || [], incoming),
+            nextCursor: !replaced && previous.events?.length ? previous.nextCursor : result.nextCursor,
+            olderLoading: !replaced && previous.olderLoading || false,
+            olderError: replaced ? null : previous.olderError, loading: false, error: null, checkedAt: Date.now(), id };
           cache.current.set(id, next);
           return next;
         });
@@ -188,6 +191,7 @@ function useThread(id, session, paused, cache) {
       if (requestVersion.current !== version || controller.signal.aborted) return;
       setState(previous => {
         if (requestVersion.current !== version || controller.signal.aborted) return previous;
+        if ((previous.thread?.historyVersion ?? null) !== (result.thread?.historyVersion ?? null)) return { ...previous, olderLoading: false };
         const next = { ...previous, events: mergeEvents(result.events, previous.events), nextCursor: result.nextCursor, olderLoading: false };
         cache.current.set(id, next);
         return next;
@@ -330,6 +334,7 @@ function ThreadDetail({ thread: indexThread, session, cache, views, now, sources
       <div className="thread-title-row"><h1>{thread.title || 'Untitled thread'}</h1>{discordUrl && <a className="icon-button discord-link" href={discordUrl} target="_blank" rel="noreferrer" aria-label="Open thread in Discord" title="Open in Discord"><Icon name="external" size={17} /></a>}</div>
       {thread.titleSource && thread.titleSource !== 'discord' && <span className="source-label">{thread.titleSource === 'session' ? 'Saved session title' : thread.titleSource === 'user_message' ? 'Label from first message · Discord title unavailable' : 'Thread identifier · Discord title unavailable'}</span>}
       <div className="thread-metadata"><Status status={thread.status} /><span className="metadata-divider" /><span>Updated {relativeTime(thread.updatedAt, now)}</span><span className="source-label" title={`Source: ${source?.name || sourceId || 'Unknown'}`}><span className={`connection-dot ${sourceProblem ? 'offline' : sourceStatus === 'unknown' ? 'unknown' : ''}`} />{source?.name || sourceId || 'Unknown source'} · {sourceStatus}</span></div>
+      {source?.lastSeenAt != null && <div className="collector-detail">Collector last seen {relativeTime(source.lastSeenAt, now)} · {source.pendingBatches ?? 0} queued batches{thread.reportedStatus && thread.status !== thread.reportedStatus ? ` · Last reported task state: ${STATUS_LABELS[thread.reportedStatus] || thread.reportedStatus}` : ''}</div>}
     </header>
     <div className="detail-content">
       <section className="todo-panel" aria-labelledby="todo-heading">
@@ -399,6 +404,7 @@ function Dashboard({ session, reconnect }) {
       <nav className="thread-list" aria-label="Bot threads">
         {index.loading ? <div className="sidebar-empty">Loading threads…</div> : groups.size ? [...groups].map(([botId, group]) => <section className="bot-group" key={botId}><h2><span className="bot-avatar"><Icon name="bot" size={14} /></span><span>{group.name}</span><span className="bot-count">{group.threads.length}</span></h2><div className="bot-threads">{group.threads.map(item => <button key={item.id} className={`thread-item ${item.id === selected ? 'selected' : ''}`} aria-current={item.id === selected ? 'true' : undefined} onClick={() => { setSelected(item.id); setSidebarOpen(false); }}><span className={`thread-status-marker status-${item.status}`} /><span className="thread-item-body"><span className="thread-item-title">{item.title || 'Untitled thread'}</span><span className="thread-item-meta"><span>{STATUS_LABELS[item.status] || 'Unknown'}</span><span>{relativeTime(item.updatedAt, now)}</span></span></span></button>)}</div></section>) : <div className="sidebar-empty">{query || filter === 'active' ? 'No threads match this view.' : index.error ? 'Unable to load threads.' : 'No threads recorded yet.'}</div>}
       </nav>
+      {index.sources.length > 0 && <section className="collector-health" aria-label="Reporting sources"><h2>Reporting sources</h2>{index.sources.map(source => <div className="collector-health-item" key={source.id}><div><strong>{source.name}</strong><span className={/offline|unavailable|degraded/.test(source.status) ? 'health-warning' : ''}>{source.status}</span></div>{source.lastSeenAt != null && <small>Seen {relativeTime(source.lastSeenAt, now)} · {source.pendingBatches ?? 0} queued</small>}{source.error && <small className="health-warning">{source.error}</small>}</div>)}</section>}
       <footer className="sidebar-footer"><div className="connection-summary"><span className={`connection-dot ${index.error || stale || disconnectedSources.length ? 'offline' : !index.checkedAt ? 'unknown' : ''}`} /><span>{index.error ? 'Server disconnected' : stale ? 'Server data is stale' : disconnectedSources.length ? `${disconnectedSources.length} source${disconnectedSources.length > 1 ? 's' : ''} unavailable` : index.checkedAt ? 'Connected to server' : 'Connecting…'}</span><span className="mode-badge">{session.local ? 'LOCAL' : 'ACTIVITY'}</span></div><div className="sidebar-footer-caption">Read-only observer<span>{index.sources.length} source{index.sources.length === 1 ? '' : 's'}</span></div></footer>
     </aside>
     <main id="main-content" className="main-panel" tabIndex={-1}>{thread ? <ThreadDetail key={thread.id} thread={thread} session={session} cache={cache} views={views} now={now} sources={index.sources} reconnect={reconnect} /> : <div className="welcome-panel"><span className="eyebrow">AGENT OBSERVABILITY</span><Empty icon="activity" title={index.loading ? 'Connecting the dots' : index.error ? 'Your workspace is offline' : 'A clear view of every thread'}><p>{index.loading ? 'Loading your bots and their recorded activity.' : index.error ? 'Threadwatch is retrying the server every 2 seconds. Your threads will appear when the connection returns.' : 'Connected bot threads will appear here. Select a thread to see its actual tasks, messages, and tool activity.'}</p></Empty><div className="welcome-features"><span><Icon name="check" size={15} />Actual task lists</span><span><Icon name="code" size={15} />Recorded tool activity</span><span><Icon name="clock" size={15} />2-second polling</span></div>{!index.loading && !index.error && <p className="welcome-hint">No simulated activity. No write access. Just the record.</p>}</div>}</main>

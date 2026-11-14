@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { isIPv4 } from 'node:net';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
-import { readFileSync, statSync, realpathSync } from 'node:fs';
+import { readFileSync, statSync, realpathSync, openSync, fstatSync, closeSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, relative, extname, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
@@ -34,8 +34,20 @@ export function readConfig(env = process.env) {
   const clientSecret = env.TW_DISCORD_CLIENT_SECRET || '';
   const allowedUsers = new Set((env.TW_ALLOWED_USER_IDS || '').split(',').map(value => value.trim()).filter(Boolean));
   if (!local && (!clientId || !/^\d+$/.test(clientId) || !clientSecret || !allowedUsers.size || [...allowedUsers].some(value => !/^\d+$/.test(value)))) throw new Error('Nonlocal mode requires TW_DISCORD_CLIENT_ID, TW_DISCORD_CLIENT_SECRET and TW_ALLOWED_USER_IDS');
-  if (env.TW_INGEST_TOKEN && env.TW_INGEST_TOKEN.length < 32) throw new Error('TW_INGEST_TOKEN must be at least 32 characters');
-  return { local, lan, host, port, clientId, clientSecret, allowedUsers, ingestToken: env.TW_INGEST_TOKEN || '', dataDir: expandPath(env.TW_DATA_DIR || join(homedir(), '.local/state/threadwatch')), bridges: loadBridges(env.TW_BRIDGES_FILE), distDir: join(ROOT, 'dist') };
+  if (env.TW_INGEST_TOKEN !== undefined && env.TW_INGEST_TOKEN_FILE !== undefined) throw new Error('TW_INGEST_TOKEN and TW_INGEST_TOKEN_FILE are mutually exclusive');
+  let ingestToken = env.TW_INGEST_TOKEN || '';
+  if (env.TW_INGEST_TOKEN_FILE !== undefined) {
+    let descriptor;
+    try {
+      descriptor = openSync(expandPath(env.TW_INGEST_TOKEN_FILE), 'r');
+      const info = fstatSync(descriptor);
+      if (!info.isFile() || (process.platform !== 'win32' && (info.mode & 0o077) !== 0)) throw new Error('Unsafe token file');
+      ingestToken = readFileSync(descriptor, 'utf8').trim();
+    } catch { throw new Error('TW_INGEST_TOKEN_FILE must be a readable private regular file with no group or other permissions'); }
+    finally { if (descriptor !== undefined) closeSync(descriptor); }
+  }
+  if ((env.TW_INGEST_TOKEN !== undefined || env.TW_INGEST_TOKEN_FILE !== undefined) && ingestToken.length < 32) throw new Error('TW_INGEST_TOKEN must be at least 32 characters');
+  return { local, lan, host, port, clientId, clientSecret, allowedUsers, ingestToken, dataDir: expandPath(env.TW_DATA_DIR || join(homedir(), '.local/state/threadwatch')), bridges: loadBridges(env.TW_BRIDGES_FILE), distDir: join(ROOT, 'dist') };
 }
 
 async function body(req) {
@@ -62,9 +74,13 @@ export function validateIngest(input, sanitize) {
   if (!Array.isArray(input.events) || input.events.length > 1000) fail(400, 'events must be an array of at most 1000 records');
   if (input.todos !== undefined && (!Array.isArray(input.todos) || input.todos.length > 2000)) fail(400, 'Invalid todos');
   const thread = { id: threadId('ingest', botId, externalId), botId, botName: sanitize.text(string(data.botName, 'botName', 200)), title: sanitize.text(string(data.title, 'title', 1000)), guildId: data.guildId == null ? null : sanitize.text(string(data.guildId, 'guildId', 100)), channelId: data.channelId == null ? null : sanitize.text(string(data.channelId, 'channelId', 100)), status: data.status, updatedAt: data.updatedAt, source: `ingest:${botId}` };
+  if (data.titleSource !== undefined) {
+    if (!['discord', 'session', 'user_message', 'fallback'].includes(data.titleSource)) fail(400, 'Invalid titleSource');
+    thread.titleSource = data.titleSource;
+  }
   const ids = new Set();
   const events = input.events.map(event => {
-    if (!event || !['message', 'tool_call', 'tool_result', 'status', 'todo_edit', 'session_exit'].includes(event.kind)) fail(400, 'Invalid event kind');
+    if (!event || !['message', 'tool_call', 'tool_result', 'tool_start', 'import_error', 'status', 'todo_edit', 'session_exit'].includes(event.kind)) fail(400, 'Invalid event kind');
     const id = string(event.id, 'event.id', 200);
     if (sanitize.text(id) !== id) fail(400, 'Identifiers must not contain sensitive content');
     if (ids.has(id)) fail(400, 'Duplicate event id');
@@ -76,19 +92,42 @@ export function validateIngest(input, sanitize) {
   });
   let todos;
   try { todos = input.todos === undefined ? undefined : normalizeTodos(input.todos, sanitize); } catch { fail(400, 'Invalid todos'); }
-  return { thread, events, todos };
+  let delivery;
+  if (input.delivery !== undefined) {
+    if (!input.delivery || typeof input.delivery !== 'object' || Array.isArray(input.delivery) || typeof input.delivery.reset !== 'boolean') fail(400, 'Invalid delivery');
+    const id = string(input.delivery.id, 'delivery.id', 200);
+    if (sanitize.text(id) !== id) fail(400, 'Identifiers must not contain sensitive content');
+    delivery = { id, reset: input.delivery.reset };
+  }
+  return { thread, events, todos, delivery };
+}
+
+export function validateHeartbeat(input, sanitize) {
+  const botId = string(input.botId, 'botId', 100);
+  if (sanitize.text(botId) !== botId) fail(400, 'Identifiers must not contain sensitive content');
+  const botName = sanitize.text(string(input.botName, 'botName', 200));
+  if (!['ready', 'degraded', 'unavailable'].includes(input.status)) fail(400, 'Invalid collector status');
+  if (!Number.isSafeInteger(input.pendingBatches) || input.pendingBatches < 0) fail(400, 'Invalid pendingBatches');
+  // Never persist remote exception text: it can contain credentials or machine paths.
+  if (input.error !== undefined) string(input.error, 'error', 1000);
+  return { botId, botName, status: input.status, pendingBatches: input.pendingBatches, ...(input.error !== undefined ? { error: 'Collector reported a collection or delivery error.' } : {}) };
 }
 
 export function createApp(config, options = {}) {
   const sanitize = createSanitizer([config.clientSecret, config.ingestToken]);
+  const now = options.now || Date.now;
   const store = options.store || new Store(config.dataDir);
   const reader = new BridgeReader(store, config.bridges, sanitize, { fetch: options.fetch || globalThis.fetch });
   const sessions = new Map();
   const fetcher = options.fetch || globalThis.fetch;
-  let refreshedAt = 0;
+  let refreshedAt = -Infinity;
   let authWindow = 0;
   let authAttempts = 0;
-  function refresh() { if (Date.now() - refreshedAt >= 1500) { reader.refresh(); refreshedAt = Date.now(); } }
+  function refresh() { const time = now(); if (time - refreshedAt >= 1500) { reader.refresh(); refreshedAt = time; } }
+  function revision(base, sources) { return `${base}:${createHash('sha256').update(JSON.stringify(sources)).digest('hex').slice(0, 16)}`; }
+  function visibleThread(thread, source) {
+    return source?.status === 'offline' && ['working', 'queued', 'waiting'].includes(thread.status) ? { ...thread, status: 'unknown', reportedStatus: thread.status } : thread;
+  }
   function guardRequest(req) {
     const host = req.headers.host;
     if (!host || /[\s/@\\]/.test(host)) fail(403, 'Invalid request host');
@@ -146,20 +185,28 @@ export function createApp(config, options = {}) {
       if (url.pathname === '/api/ingest' && req.method === 'POST') {
         const token = /^Bearer (\S+)$/.exec(req.headers.authorization || '')?.[1];
         if (!equal(token, config.ingestToken)) fail(401, 'Ingest authorization required');
-        const { thread, events, todos } = validateIngest(await body(req), sanitize);
-        store.transaction(() => { store.upsert(thread, todos); store.append(thread.id, events); });
-        return json(res, 200, { id: thread.id, revision: store.revision() });
+        const { thread, events, todos, delivery } = validateIngest(await body(req), sanitize);
+        const id = store.ingest(thread, events, todos, delivery);
+        return json(res, 200, { id, revision: store.revision() });
+      }
+      if (url.pathname === '/api/heartbeat' && req.method === 'POST') {
+        const token = /^Bearer (\S+)$/.exec(req.headers.authorization || '')?.[1];
+        if (!equal(token, config.ingestToken)) fail(401, 'Ingest authorization required');
+        store.recordHeartbeat(validateHeartbeat(await body(req), sanitize), now());
+        return json(res, 200, { revision: store.revision() });
       }
       if (url.pathname.startsWith('/api/')) {
         if (!authorized(req)) fail(401, 'Authorization required');
         if (req.method !== 'GET') fail(405, 'Method not allowed');
         refresh();
+        const collectors = store.collectorSources(now());
+        const collectorById = new Map(collectors.map(source => [source.id, source]));
         if (url.pathname === '/api/threads') {
           const configured = new Set(reader.sources.map(source => source.id));
-          const threads = store.list().filter(thread => thread.source.startsWith('ingest:') || configured.has(thread.source));
-          const sources = [...reader.sources];
+          const threads = store.list().filter(thread => thread.source.startsWith('ingest:') || configured.has(thread.source)).map(thread => visibleThread(thread, collectorById.get(thread.source)));
+          const sources = [...reader.sources, ...collectors];
           for (const thread of threads) if (thread.source.startsWith('ingest:') && !sources.some(source => source.id === thread.source)) sources.push({ id: thread.source, name: thread.botName, status: 'saved' });
-          return json(res, 200, { threads, sources, revision: `${store.revision()}:${createHash('sha256').update(JSON.stringify(sources)).digest('hex').slice(0, 16)}` });
+          return json(res, 200, { threads, sources, revision: revision(store.revision(), sources) });
         }
         const match = /^\/api\/threads\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
         if (match) {
@@ -168,6 +215,9 @@ export function createApp(config, options = {}) {
           let detail;
           try { detail = store.detail(match[1], url.searchParams.get('before'), Number(rawLimit)); } catch { fail(400, 'Invalid pagination cursor'); }
           if (!detail || (!detail.thread.source.startsWith('ingest:') && !reader.sources.some(source => source.id === detail.thread.source))) fail(404, 'Thread not found');
+          const source = collectorById.get(detail.thread.source);
+          detail.thread = visibleThread(detail.thread, source);
+          detail.revision = revision(detail.revision, source || null);
           return json(res, 200, detail);
         }
         fail(404, 'API route not found');
