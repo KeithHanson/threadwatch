@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Show Active before All threads and select Active by default.
+- Sort agents alphabetically and their threads by Discord creation time, oldest first; unknown creation times sort last.
+
 ## 0.2.0
 
 - Rewrote the server, collector, and service installer in Rust.
