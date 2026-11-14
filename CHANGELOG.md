@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Added explicit trusted-LAN viewing through `TW_LAN=1`, restricted to a private IPv4 bind address and private-network peers. Viewer authentication is disabled by explicit operator choice; Host/Origin and ingest-token checks remain enabled.
+- Added an independently runnable collector with a durable outbound queue, restart-safe delivery IDs, incremental updates, and explicit transcript replacement.
+- Added shared-token-file configuration, persistent collector heartbeats, queue-depth display, and stale reporting indicators.
+- Added systemd service installation and separate server/collector environment examples. Collector-only hosts require Node.js, not frontend dependencies.
 
 ## 0.1.0
 
