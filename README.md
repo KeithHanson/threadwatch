@@ -20,13 +20,24 @@ cp bridges.example.json bridges.local.json
 TW_LOCAL=1 TW_BRIDGES_FILE=./bridges.local.json npm start
 ```
 
-Local mode is for the machine owner, binds to loopback, and does not require Discord login. Never publish or tunnel local mode. Transcript data is sensitive even after redaction.
+Local mode defaults to loopback and does not require Discord login. Never publish it to the internet. Transcript data is sensitive even after redaction.
 
 Open `http://127.0.0.1:8787` on the host. Configuration can also be loaded with `node --env-file=.env server/index.mjs` after copying `.env.example` to `.env`.
 
+### Trusted LAN access
+
+Explicitly opt in to unauthenticated LAN viewing with a specific private IPv4 address:
+
+```sh
+TW_LOCAL=1 TW_LAN=1 TW_HOST=192.168.10.5 TW_BRIDGES_FILE=./bridges.local.json npm start
+```
+
+Open `http://192.168.10.5:8787` from another device on that network. Replace the address with the server's LAN address. Every reachable private-network device can read all connected transcripts without signing in; HTTP is unencrypted. Use only on a trusted network, with no public tunnel or router port forwarding. Wildcard/public bind addresses are rejected. Host/Origin protections remain enabled and ingestion still requires its separate token.
+
 | Variable | Purpose |
 | --- | --- |
-| `TW_LOCAL` | Set `1` for loopback-only operator access; `0` for Discord authentication. |
+| `TW_LOCAL` | Set `1` for unauthenticated viewing (loopback unless `TW_LAN=1`); `0` for Discord authentication. |
+| `TW_LAN` | Set `1` with `TW_LOCAL=1` and a private IPv4 `TW_HOST` to allow trusted-LAN viewing without login. |
 | `TW_HOST`, `TW_PORT` | Listener address and port; defaults `127.0.0.1:8787`. |
 | `TW_BRIDGES_FILE` | JSON array of named read-only bridge sources. |
 | `TW_DATA_DIR` | Persistent ingestion database directory. |

@@ -35,6 +35,25 @@ test('configuration fails closed and local bind cannot expose transcripts', () =
   assert.equal(readConfig({ TW_LOCAL: '1' }).port, 8787);
 });
 
+test('trusted LAN access requires explicit private bind and rejects foreign hosts and origins', async t => {
+  for (const host of ['0.0.0.0', '8.8.8.8', '127.0.0.1', '192.168.999.1']) {
+    assert.throws(() => readConfig({ TW_LOCAL: '1', TW_LAN: '1', TW_HOST: host }), /TW_LAN/);
+  }
+  assert.throws(() => readConfig({ TW_LAN: '1', TW_HOST: '192.168.10.5' }), /TW_LAN/);
+  const cfg = readConfig({ TW_LOCAL: '1', TW_LAN: '1', TW_HOST: '192.168.10.5' });
+  const app = await running(t, { ...config(temp(t), true), host: cfg.host, lan: cfg.lan });
+  const request = headers => new Promise((resolve, reject) => {
+    get(`${app.url}/api/threads`, { headers }, response => {
+      response.resume();
+      resolve(response.statusCode);
+    }).on('error', reject);
+  });
+  assert.equal(await request({ Host: '192.168.10.5:8787' }), 200);
+  assert.equal(await request({ Host: 'attacker.example' }), 403);
+  assert.equal(await request({ Host: '192.168.10.5:8787', Origin: 'https://attacker.example' }), 403);
+  assert.equal(await request({ Host: '192.168.10.5:8787', 'Sec-Fetch-Site': 'cross-site' }), 403);
+});
+
 test('unauthorized reads and ingestion are rejected independently', async t => {
   const app = await running(t, config(temp(t)));
   assert.equal((await fetch(`${app.url}/api/config`)).status, 200);
