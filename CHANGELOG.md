@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+- Rewrote the server, collector, and service installer in Rust.
+- Replaced React/Vite with server-rendered HTML, htmx, and embedded static assets.
+- Preserved the reporting API, existing SQLite history, durable queues, and shared-token LAN deployment.
+- Removed the Node runtime/toolchain and unused Discord Activity integration.
+
+## Pre-rewrite development
 
 - Added explicit trusted-LAN viewing through `TW_LAN=1`, restricted to a private IPv4 bind address and private-network peers. Viewer authentication is disabled by explicit operator choice; Host/Origin and ingest-token checks remain enabled.
 - Added an independently runnable collector with a durable outbound queue, restart-safe delivery IDs, incremental updates, and explicit transcript replacement.
