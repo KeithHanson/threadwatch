@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Show Active before All threads and select Active by default.
-- Sort agents alphabetically and their threads by Discord creation time, newest first; unknown creation times sort last.
+- Sort agents alphabetically and their threads by last update, most recent first; unknown update times sort last.
 
 ## 0.2.0
 

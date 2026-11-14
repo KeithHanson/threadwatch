@@ -186,14 +186,9 @@ fn render_index(snapshot: &Value) -> String {
         )
     });
     for group in &mut groups {
-        // Discord snowflakes encode creation time, unlike mutable updatedAt.
-        // Threads without a Discord creation time sort last with a stable ID tie-break.
         group.sort_by_key(|thread| {
             (
-                text(thread, "channelId")
-                    .parse::<u64>()
-                    .map(|id| u64::MAX - (id >> 22))
-                    .unwrap_or(u64::MAX),
+                std::cmp::Reverse(thread["updatedAt"].as_i64()),
                 text(thread, "id"),
             )
         });
