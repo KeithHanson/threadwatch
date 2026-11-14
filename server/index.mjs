@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { isIPv4 } from 'node:net';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { readFileSync, statSync, realpathSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,19 +15,27 @@ function fail(status, message) { const error = new Error(message); error.status 
 function string(value, name, max = 1000) { if (typeof value !== 'string' || !value.length || value.length > max) fail(400, `Invalid ${name}`); return value; }
 function equal(a, b) { if (!a || !b) return false; const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); }
 function loopback(address) { return address === '::1' || /^127\./.test(address ?? '') || /^::ffff:127\./.test(address ?? ''); }
+function privateAddress(address) {
+  const ip = (address || '').replace(/^::ffff:/, '');
+  if (!isIPv4(ip)) return false;
+  const [a, b] = ip.split('.').map(Number);
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
 
 export function readConfig(env = process.env) {
   const local = env.TW_LOCAL === '1';
+  const lan = env.TW_LAN === '1';
   const host = env.TW_HOST || '127.0.0.1';
   const port = Number(env.TW_PORT || 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid TW_PORT');
-  if (local && !['127.0.0.1', 'localhost', '::1'].includes(host)) throw new Error('TW_LOCAL requires a loopback TW_HOST');
+  if (lan && (!local || !privateAddress(host))) throw new Error('TW_LAN requires TW_LOCAL=1 and a specific private IPv4 TW_HOST');
+  if (local && !lan && !['127.0.0.1', 'localhost', '::1'].includes(host)) throw new Error('TW_LOCAL requires a loopback TW_HOST');
   const clientId = env.TW_DISCORD_CLIENT_ID || null;
   const clientSecret = env.TW_DISCORD_CLIENT_SECRET || '';
   const allowedUsers = new Set((env.TW_ALLOWED_USER_IDS || '').split(',').map(value => value.trim()).filter(Boolean));
   if (!local && (!clientId || !/^\d+$/.test(clientId) || !clientSecret || !allowedUsers.size || [...allowedUsers].some(value => !/^\d+$/.test(value)))) throw new Error('Nonlocal mode requires TW_DISCORD_CLIENT_ID, TW_DISCORD_CLIENT_SECRET and TW_ALLOWED_USER_IDS');
   if (env.TW_INGEST_TOKEN && env.TW_INGEST_TOKEN.length < 32) throw new Error('TW_INGEST_TOKEN must be at least 32 characters');
-  return { local, host, port, clientId, clientSecret, allowedUsers, ingestToken: env.TW_INGEST_TOKEN || '', dataDir: expandPath(env.TW_DATA_DIR || join(homedir(), '.local/state/threadwatch')), bridges: loadBridges(env.TW_BRIDGES_FILE), distDir: join(ROOT, 'dist') };
+  return { local, lan, host, port, clientId, clientSecret, allowedUsers, ingestToken: env.TW_INGEST_TOKEN || '', dataDir: expandPath(env.TW_DATA_DIR || join(homedir(), '.local/state/threadwatch')), bridges: loadBridges(env.TW_BRIDGES_FILE), distDir: join(ROOT, 'dist') };
 }
 
 async function body(req) {
@@ -86,7 +95,9 @@ export function createApp(config, options = {}) {
     let authority;
     try { authority = new URL(`http://${host}`); } catch { fail(403, 'Invalid request host'); }
     if (config.local) {
-      if (!loopback(req.socket.remoteAddress) || !['localhost', '127.0.0.1', '[::1]'].includes(authority.hostname)) fail(403, 'Local mode accepts loopback requests only');
+      if (config.lan) {
+        if ((!loopback(req.socket.remoteAddress) && !privateAddress(req.socket.remoteAddress)) || authority.hostname !== config.host) fail(403, 'LAN mode requires a private peer and the configured host');
+      } else if (!loopback(req.socket.remoteAddress) || !['localhost', '127.0.0.1', '[::1]'].includes(authority.hostname)) fail(403, 'Local mode accepts loopback requests only');
       if (req.headers['sec-fetch-site'] === 'cross-site') fail(403, 'Cross-origin request rejected');
     }
     const origin = req.headers.origin;
@@ -193,7 +204,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     const config = readConfig();
     const app = createApp(config);
     app.server.on('error', () => { console.error('Threadwatch could not start its HTTP listener.'); process.exitCode = 1; app.close(); });
-    app.server.listen(config.port, config.host, () => console.log(`Threadwatch listening on ${config.host}:${config.port} (${config.local ? 'local loopback' : 'Discord allowlist'} mode)`));
+    app.server.listen(config.port, config.host, () => console.log(`Threadwatch listening on ${config.host}:${config.port} (${config.lan ? 'trusted LAN, no viewer authentication' : config.local ? 'local loopback' : 'Discord allowlist'} mode)`));
     const stop = () => app.server.close(() => { app.close(); process.exit(0); });
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
