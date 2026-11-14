@@ -144,7 +144,7 @@ async fn shell(State(state): State<Arc<AppState>>, Query(params): Query<Params>)
         .map(|detail| render_panel(&detail, &snapshot))
         .unwrap_or_default();
     let mut html = String::from(
-        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"selfRequestsOnly":true}'><title>Threadwatch · Your agents, in focus</title><link rel="stylesheet" href="/static/style.css"><script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head><body><a class="skip-link" href="#main-content">Skip to thread</a><div class="app-shell"><header class="mobile-header"><button id="menu" aria-controls="thread-sidebar" aria-expanded="false">Threads</button><strong>threadwatch<span class="accent">.</span></strong></header><aside id="thread-sidebar" class="sidebar" aria-label="Threads"><header class="brand"><span class="brand-mark" aria-hidden="true">⌁</span><div><strong>threadwatch<span class="accent">.</span></strong><p>YOUR AGENTS, IN FOCUS</p></div></header><div class="sidebar-tools"><label class="search-field"><span class="sr-only">Search threads and bots</span><input id="thread-search" type="search" placeholder="Find a thread or bot…" autocomplete="off"></label><fieldset class="filter-tabs"><legend class="sr-only">Thread filter</legend><label><input type="radio" name="thread-filter" value="all" checked> All threads</label><label><input type="radio" name="thread-filter" value="active"> Active</label></fieldset></div><div id="index-data" hx-get="/ui/index" hx-trigger="every 2s" hx-swap="innerHTML" hx-sync="this:drop">"##,
+        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"selfRequestsOnly":true}'><title>Threadwatch · Your agents, in focus</title><link rel="stylesheet" href="/static/style.css"><script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head><body><a class="skip-link" href="#main-content">Skip to thread</a><div class="app-shell"><header class="mobile-header"><button id="menu" aria-controls="thread-sidebar" aria-expanded="false">Threads</button><strong>threadwatch<span class="accent">.</span></strong></header><aside id="thread-sidebar" class="sidebar" aria-label="Threads"><header class="brand"><span class="brand-mark" aria-hidden="true">⌁</span><div><strong>threadwatch<span class="accent">.</span></strong><p>YOUR AGENTS, IN FOCUS</p></div></header><div class="sidebar-tools"><label class="search-field"><span class="sr-only">Search threads and bots</span><input id="thread-search" type="search" placeholder="Find a thread or bot…" autocomplete="off"></label><fieldset class="filter-tabs"><legend class="sr-only">Thread filter</legend><label><input type="radio" name="thread-filter" value="active" checked> Active</label><label><input type="radio" name="thread-filter" value="all"> All threads</label></fieldset></div><div id="index-data" hx-get="/ui/index" hx-trigger="every 2s" hx-swap="innerHTML" hx-sync="this:drop">"##,
     );
     html.push_str(&render_index(&snapshot));
     html.push_str(r##"</div><p id="connection" class="connection" role="status">Connected to server · LAN</p><footer class="sidebar-footer">Read-only observer · 2s refresh</footer></aside><main id="main-content" tabindex="-1"><div id="request-error" class="notice" role="alert" hidden></div><div id="welcome" class="welcome"><span class="eyebrow">AGENT OBSERVABILITY</span><h1>A clear view of every thread.</h1><p>Select a thread to inspect its actual tasks, messages, and tool activity. Reporting sources remain visible even before their first thread.</p></div><div id="panels">"##);
@@ -178,6 +178,25 @@ fn render_index(snapshot: &Value) -> String {
             groups.len() - 1
         });
         groups[position].push(thread);
+    }
+    groups.sort_by_cached_key(|group| {
+        (
+            text(group[0], "botName").to_lowercase(),
+            text(group[0], "botId").to_owned(),
+        )
+    });
+    for group in &mut groups {
+        // Discord snowflakes encode creation time, unlike mutable updatedAt.
+        // Threads without a Discord creation time sort last with a stable ID tie-break.
+        group.sort_by_key(|thread| {
+            (
+                text(thread, "channelId")
+                    .parse::<u64>()
+                    .map(|id| id >> 22)
+                    .unwrap_or(u64::MAX),
+                text(thread, "id"),
+            )
+        });
     }
     for group in groups {
         let _ = write!(
