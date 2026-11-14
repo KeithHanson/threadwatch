@@ -1,105 +1,94 @@
 # Threadwatch
 
-A read-only web dashboard for inspecting bots, their working threads, actual todos, and operational transcripts. The central server and independently runnable collector share this repository.
+A Rust web dashboard and collector for bot threads, actual todos, and operational transcripts. The interface is server-rendered HTML updated by htmx. No Node runtime, React, npm install, frontend build, or Discord Activity setup.
 
-## Interface
+## Architecture
 
-Select a bot's thread in the sidebar to inspect its todos and transcript. Tool calls and results are expandable. Search, pause/follow, and older-history loading make long sessions navigable. The app polls saved state every two seconds; this is not token-by-token model streaming.
-
-The OMP bridge adapter reads the bridge database and session files without changing them or restarting the bridge. Other runners can publish through the authenticated ingestion API. A source must be connected before its bots appear: the app cannot automatically observe other machines or Discord conversations it has not been given.
-
-## Local operation
-
-Requires Node.js 24 or newer with `node:sqlite` support.
-
-```sh
-npm ci
-npm run build
-cp bridges.example.json bridges.local.json
-# Edit paths and bot identity in bridges.local.json.
-TW_LOCAL=1 TW_BRIDGES_FILE=./bridges.local.json npm start
+```text
+Bridge SQLite + session JSONL → Rust collector + durable queue
+                                         ↓ HTTP/shared token
+                               Rust server + SQLite
+                                         ↓
+                              HTML + htmx → browser
 ```
 
-Local mode defaults to loopback and does not require Discord login. Never publish it to the internet. Transcript data is sensitive even after redaction.
+One binary provides `serve`, `collect`, and `install-service`. Static assets, including pinned htmx 2.0.8, are embedded; the browser does not fetch CDN resources. The collector reads its bridge without changing or restarting it.
 
-Open `http://127.0.0.1:8787` on the host. Configuration can also be loaded with `node --env-file=.env server/index.mjs` after copying `.env.example` to `.env`.
+## Build
 
-### Trusted LAN access
-
-Explicitly opt in to unauthenticated LAN viewing with a specific private IPv4 address:
+Requires a Rust toolchain supporting edition 2024, a C compiler for bundled SQLite, and Cargo.
 
 ```sh
-TW_LOCAL=1 TW_LAN=1 TW_HOST=192.168.10.5 TW_BRIDGES_FILE=./bridges.local.json npm start
+cargo build --locked --release
+./target/release/threadwatch --help
 ```
 
-Open `http://192.168.10.5:8787` from another device on that network. Replace the address with the server's LAN address. Every reachable private-network device can read all connected transcripts without signing in; HTTP is unencrypted. Use only on a trusted network, with no public tunnel or router port forwarding. Wildcard/public bind addresses are rejected. Host/Origin protections remain enabled and ingestion still requires its separate token.
+Distribute the resulting `threadwatch` executable to compatible hosts. Neither source files nor Rust are needed at runtime. Use a build matching the host architecture and system libraries.
+
+## Central server
+
+Copy `deploy/server.env.example` to a private environment file owned by the service user. Use absolute paths. Create one mode-600 shared token file with at least 32 random characters and distribute its value privately to trusted collectors.
+
+```sh
+threadwatch --env-file /absolute/path/server.env serve
+```
+
+The server receives activity through collectors; it does not also import the same bridge directly. `TW_DATA_DIR` holds `threadwatch.sqlite`. Existing stored threads, delivery receipts, and heartbeat records are reused.
+
+Viewer access is explicitly trusted: `TW_LOCAL=1` defaults to `127.0.0.1:8787`. For the LAN, also set `TW_LAN=1` and a specific private IPv4 `TW_HOST`. Allow TCP 8787 in the host firewall only from the trusted subnet. Wildcard/public unauthenticated binds and foreign Host/Origin requests are rejected.
+
+For this deployment, browse **http://192.168.10.5:8787**. Reachable LAN devices can read all connected transcripts without login. HTTP is unencrypted. No public tunnels or router forwarding.
 
 | Variable | Purpose |
 | --- | --- |
-| `TW_LOCAL` | Set `1` for unauthenticated viewing (loopback unless `TW_LAN=1`); `0` for Discord authentication. |
-| `TW_LAN` | Set `1` with `TW_LOCAL=1` and a private IPv4 `TW_HOST` to allow trusted-LAN viewing without login. |
-| `TW_HOST`, `TW_PORT` | Listener address and port; defaults `127.0.0.1:8787`. |
-| `TW_BRIDGES_FILE` | JSON array of named read-only bridge sources. |
-| `TW_DATA_DIR` | Persistent ingestion database directory. |
-| `TW_DISCORD_CLIENT_ID` | Discord application ID. |
-| `TW_DISCORD_CLIENT_SECRET` | Server-only OAuth secret. |
-| `TW_ALLOWED_USER_IDS` | Comma-separated operator Discord IDs. |
-| `TW_INGEST_TOKEN` | Separate credential for trusted event producers. |
-| `TW_INGEST_TOKEN_FILE` | Mode-600 shared ingestion token file; use instead of `TW_INGEST_TOKEN`, not alongside it. |
+| `TW_LOCAL` | Required `1` for trusted viewing. |
+| `TW_LAN` | Optional `1` to allow private-network peers on a private IPv4 bind. |
+| `TW_HOST`, `TW_PORT` | Defaults `127.0.0.1:8787`. |
+| `TW_DATA_DIR` | Central server database directory. |
+| `TW_INGEST_TOKEN_FILE` | Private shared ingestion-token file. |
+| `TW_INGEST_TOKEN` | Alternative inline environment token; do not set both token options. |
 
-Without `TW_BRIDGES_FILE`, the server uses the local OMP bridge under `~/.local/state/omp-discord-bridge`. Set a source file containing `[]` for ingestion-only operation. Without `TW_DATA_DIR`, ingested state is stored under `~/.local/state/threadwatch`.
+## Each collector host
 
-Each bridge source may also set `botTokenFile` to a protected Discord bot-token file. This enables read-only Discord thread-title lookup; the token never goes to the browser. Without it, titles come from the saved session or a label derived from its first user message. Keep token paths in ignored local configuration.
+Configure exactly one bridge in a JSON file based on `bridges.example.json`. Give each bot a unique stable `id` and readable `name`. These distinguish sources, not security principals; collectors share one token and trust each other.
 
-## Reporting from multiple bot hosts
+Set the local bridge database and session directory paths. Optional `botTokenFile` permits read-only Discord thread-title lookup; that credential stays on the collector host.
 
-Run one collector alongside each Discord bridge. Each bridge needs a unique stable `id` and a human-readable `name` in its source JSON; these are identifiers, not separate credentials. All collectors use the same ingestion token.
-
-```text
-Bridge + sessions → local collector + durable queue → HTTP → central Threadwatch
-```
-
-The collector reads local bridge/session state, sanitizes it before transmission, and sends changed records. Initial history is backfilled. Queued batches and delivery IDs survive outages and restarts; the server deduplicates acknowledged deliveries, including transcript replacements. Large text records are split into labeled continuation records rather than silently truncated.
-
-Collector heartbeats report source health and queued batches. The dashboard marks reporting offline after 45 seconds without a heartbeat; this means the collector is unreachable, not necessarily that the model stopped. Working/queued/waiting task states become unknown while reporting is offline. A collector with no threads still appears under Reporting sources.
-
-### Central server
-
-1. Build the dashboard with `npm ci && npm run build`.
-2. Create a protected shared token file (at least 32 random characters) outside the checkout. Share its value privately with the other trusted hosts.
-3. Copy `deploy/server.env.example` to a mode-600 file owned by the service user and adjust paths/address. Set `TW_BRIDGES_FILE` to a JSON file containing `[]` (see `deploy/no-bridges.json`) so the server does not also import the same bridge directly.
-4. Run `node --env-file=/absolute/path/server.env server/index.mjs`.
-5. Allow TCP 8787 in the host firewall from the trusted subnet only. Do not expose this unauthenticated HTTP deployment publicly.
-
-### Each collector host
-
-Requires Node.js 24 or newer. Clone this repo; **no `npm install`, frontend build, or dashboard process is needed** for a collector-only host.
-
-1. Copy `bridges.example.json` outside the checkout. Configure exactly one bridge, with a unique bot `id`/`name` and the local database/session paths. Optional `botTokenFile` enables Discord titles.
-2. Copy `deploy/collector.env.example` to a mode-600 file owned by the bot's service user. Set the central server URL, source-file path, shared-token-file path, and a dedicated writable state directory.
-3. Store the shared token in a file readable only by the service user. The collector must be able to read its own bridge database and session files; do not share those files over the network.
-4. Exercise collection and delivery:
+Copy `deploy/collector.env.example` to a mode-600 file and adjust the server URL, bridge JSON path, token-file path, and writable collector state directory.
 
 ```sh
-node --env-file=/absolute/path/collector.env collector/index.mjs --once
+# Backfill and deliver once; returns nonzero for unavailable sources/undelivered data.
+threadwatch --env-file /absolute/path/collector.env collect --once
+# Continuous operation.
+threadwatch --env-file /absolute/path/collector.env collect
 ```
 
-5. Run continuously without `--once`, or install the service below. Keep the collector state directory across upgrades: it contains its delivery progress and pending queue. Use exactly one collector process per bot identity/state directory.
+Use `TW_COLLECTOR_DATA_DIR` separately from the server's state directory. Keep it across upgrades: it contains captured history, delivery progress, and pending batches. Only one collector may own a state directory. Existing Node-era SQLite queues and delivery IDs are migrated/reused without discarding pending work.
 
-`TW_COLLECT_INTERVAL_MS` defaults to 2,000; `TW_HEARTBEAT_INTERVAL_MS` defaults to 10,000. Set `TW_COLLECTOR_DATA_DIR` separately from the server's `TW_DATA_DIR`. Do not change destination/token identity while carrying a queue for a different server.
+Collection defaults to every two seconds (`TW_COLLECT_INTERVAL_MS`). Heartbeats default to ten seconds (`TW_HEARTBEAT_INTERVAL_MS`, maximum 30 seconds). Source collection does not block heartbeat or delivery during backfill. Batches are retried with stable IDs after outages; the receiver transactionally deduplicates retries, including history resets. Large text is split into labeled Unicode-safe continuation records, not silently truncated.
 
-### Automatic startup
+Do not point an existing queue at a different server or reuse a bot ID for another bridge. The collector needs read access to its own bridge files, not network-shared databases.
 
-The installer creates a systemd system service running as the specified **non-root** user, enables it at boot, and restarts it. Run from the checkout on the intended host; stop any manually launched copy first.
+## Interface
+
+The dashboard groups working and historical threads by bot. It shows actual todos, messages, expandable tool starts/calls/results, errors, titles, and source health. Search, older-history loading, and pause/follow support long transcripts. Updates poll saved records every two seconds, not token-by-token model output.
+
+The server marks reporting offline after 45 seconds without a heartbeat. Active task states then show Unknown, retaining the last reported state. This detects collector reporting loss, not necessarily a stopped model process. Queued batches and sources with no threads remain visible.
+
+## Automatic startup
+
+Install the binary at a stable executable path first. The native installer writes systemd units, validates them, enables boot startup, and restarts the selected service as a non-root user:
 
 ```sh
-sudo "$(node -p 'process.execPath')" scripts/install-service.mjs server /absolute/path/server.env SERVICE_USER
-sudo "$(node -p 'process.execPath')" scripts/install-service.mjs collector /absolute/path/collector.env SERVICE_USER
+sudo /usr/local/bin/threadwatch --env-file /absolute/path/server.env install-service server --user SERVICE_USER
+sudo /usr/local/bin/threadwatch --env-file /absolute/path/collector.env install-service collector --user SERVICE_USER
 ```
 
-Replace `SERVICE_USER` with the local account owning the environment file and runtime data. Install only the applicable role on each host. Environment files must be mode 600 and owned by that account. The generated unit records the actual Node executable, checkout path, and selected environment file; rerun the installer after moving the checkout or Node installation.
+Replace `SERVICE_USER` with the account owning the private environment file and runtime data. Install only the relevant role on each host. Stop manually launched copies before installing. The unit uses that exact executable and environment file, with the environment file's directory as its working directory.
 
-Inspect with `systemctl status threadwatch.service` or `systemctl status threadwatch-collector.service`; logs are available through `journalctl -u` for the corresponding unit. Other machines are not configured automatically.
+Inspect `systemctl status threadwatch.service` or `systemctl status threadwatch-collector.service`; use `journalctl -u` for their logs. Replace an installed executable by staging a new file and atomically renaming it, then restart services. Do not overwrite a running executable in place.
+
+For upgrades from Node, stop the old collector/server before starting Rust on the same databases. Back up SQLite with its backup API, not a raw copy of a live WAL database. Reuse the existing state and token files; remove the obsolete server-side `TW_BRIDGES_FILE` setting. The Discord bridge itself does not need restarting.
 
 
 ## Connecting other runners
@@ -141,19 +130,6 @@ The ingest credential grants write access for trusted producers; it is not a vie
 
 Durable producers may include `delivery: {"id": "stable-batch-id", "reset": false}`. Retries must preserve the exact batch and ID. A first replacement batch uses `reset: true`; subsequent chunks use `false`. A reset changes the returned thread's `historyVersion`, allowing viewers to discard replaced history. `POST /api/heartbeat` uses the same bearer token and accepts `botId`, `botName`, `status` (`ready`, `degraded`, or `unavailable`), `pendingBatches`, and an optional sanitized error summary.
 
-## Optional Discord Activity setup
-
-1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications). Enable Activities and the desired user/guild installation contexts.
-2. Add the OAuth redirect URI `https://127.0.0.1`, as in Discord's Activity tutorial. The Embedded App SDK handles the embedded authorization flow.
-3. Configure the server with the application's client ID, client secret, and an explicit allowlist of operator Discord user IDs. Secrets belong in server-side environment configuration, never frontend variables or commits.
-4. Serve the app and API together through an approved HTTPS endpoint. Do not expose the local unauthenticated mode.
-5. Add a root `/` Activity URL mapping to that HTTPS host. All app requests use same-origin paths.
-6. Enable Discord Developer Mode and launch the Activity from the App Launcher using the developer/team account. Non-distributed Activities have developer/team access restrictions.
-7. Confirm that an allowed operator sees real thread data and an unlisted user is denied. Verify the actual embedded interface, not just a browser build.
-
-Discord login identifies the user on the server via Discord's API. The operator allowlist grants access to **all configured sources**. This is an operator console, not a guild-wide dashboard: it does not infer private-thread membership or offer per-channel authorization. Do not add users who should not see every connected source.
-
-Public hosting and Developer Portal configuration are separate deployment steps; running locally does not make the app launchable in Discord.
 
 ## Transcript boundaries
 
@@ -161,16 +137,15 @@ Only operational messages and tool activity belong in this app. Hidden thinking,
 
 The adapter can only show records the runner has persisted. Missing records, disconnected sources, and unavailable history must not be mistaken for complete live execution traces. Unknown provider/custom records and nontext attachments are not rendered. Thread status comes from persisted bridge state, not a bot heartbeat.
 
-## Development
+## Development and third-party assets
 
 ```sh
-npm test
-npm run build
+cargo test --locked
+cargo build --locked --release
 ```
 
-No bot restart is required for the read-only adapter. Do not commit local source configuration, session files, databases, OAuth credentials, or ingest tokens.
+Rust tests cover protocol, persistence, collector delivery, and escaping. Verify interface changes in a real browser.
 
-## References
+`static/htmx.min.js` is htmx 2.0.8 under the bundled `static/htmx.LICENSE` (0BSD), from https://unpkg.com/htmx.org@2.0.8/dist/htmx.min.js. SHA-256: `22283ef68cb7545914f0a88a1bdedc7256a703d1d580c1d255217d0a50d31313`.
 
-- [Building a Discord Activity](https://docs.discord.com/developers/activities/building-an-activity)
-- [Activity networking and security](https://docs.discord.com/developers/activities/development-guides/networking)
+Do not commit token files, local bridge configuration, transcript databases, or runtime state.
