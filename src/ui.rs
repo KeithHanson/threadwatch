@@ -192,7 +192,7 @@ fn render_index(snapshot: &Value) -> String {
             (
                 text(thread, "channelId")
                     .parse::<u64>()
-                    .map(|id| id >> 22)
+                    .map(|id| u64::MAX - (id >> 22))
                     .unwrap_or(u64::MAX),
                 text(thread, "id"),
             )
