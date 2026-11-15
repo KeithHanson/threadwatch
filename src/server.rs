@@ -33,6 +33,7 @@ pub struct Config {
     pub local: bool,
     pub lan: bool,
     pub host: String,
+    pub allowed_hosts: Vec<String>,
     pub port: u16,
     pub ingest_token: String,
     pub data_dir: PathBuf,
@@ -63,6 +64,22 @@ impl Config {
             bail!("TW_LOCAL=1 is required; Discord OAuth is no longer supported");
         }
         validate_bind(lan, &host)?;
+        let allowed_hosts = env("TW_ALLOWED_HOSTS")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|value| {
+                let value = value.trim();
+                (!value.is_empty()).then(|| value.to_owned())
+            })
+            .collect::<Vec<_>>();
+        if allowed_hosts.iter().any(|value| {
+            value.len() > 253
+                || !value
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-'))
+        }) {
+            bail!("TW_ALLOWED_HOSTS must contain comma-separated hostnames");
+        }
         let token = env("TW_INGEST_TOKEN");
         let token_file = env("TW_INGEST_TOKEN_FILE");
         if token.is_some() && token_file.is_some() {
@@ -105,6 +122,7 @@ impl Config {
             local,
             lan,
             host,
+            allowed_hosts,
             port,
             ingest_token,
             data_dir: expand_path(&directory, &env)?,
@@ -659,7 +677,9 @@ fn check_request(config: &Config, request: &Request<Body>) -> ApiResult<()> {
     }
     if config.lan {
         let private_peer = matches!(peer, IpAddr::V4(ip) if ip.is_private());
-        if (!peer.is_loopback() && !private_peer) || authority.host() != config.host {
+        let allowed_host = authority.host() == config.host
+            || config.allowed_hosts.iter().any(|host| host == authority.host());
+        if (!peer.is_loopback() && !private_peer) || !allowed_host {
             return Err(forbidden());
         }
     } else if !peer.is_loopback()
