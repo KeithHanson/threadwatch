@@ -220,6 +220,25 @@ async fn every_route_checks_actual_peer_host_origin_and_cross_site_requests() {
 }
 
 #[tokio::test]
+async fn browser_urls_are_relative_for_path_prefix_proxies() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = server::router(Arc::new(AppState::new(config(dir.path())).unwrap()));
+    let (status, body) = send(&app, request("GET", "/", Body::empty())).await;
+    assert_eq!(status, StatusCode::OK);
+    let html = body.as_str().unwrap();
+    for expected in [
+        "href=\"static/style.css\"",
+        "src=\"static/app.js\"",
+        "hx-get=\"ui/index\"",
+    ] {
+        assert!(html.contains(expected));
+    }
+    for forbidden in ["href=\"/static/", "src=\"/static/", "hx-get=\"/ui/"] {
+        assert!(!html.contains(forbidden));
+    }
+}
+
+#[tokio::test]
 async fn ingestion_authentication_body_limits_and_sanitization_precede_persistence() {
     let dir = tempfile::tempdir().unwrap();
     let app = server::router(Arc::new(AppState::new(config(dir.path())).unwrap()));

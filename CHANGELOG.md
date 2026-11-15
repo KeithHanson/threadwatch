@@ -4,6 +4,7 @@
 
 - Show Active before All threads and select Active by default.
 - Sort agents alphabetically and their threads by last update, most recent first; unknown update times sort last.
+- Use relative browser URLs so the dashboard works beneath a stripped reverse-proxy path prefix.
 
 ## 0.2.0
 

@@ -115,7 +115,7 @@
     requestAnimationFrame(() => setScroll(panel, state.following && !$('.transcript-search', panel).value ? $('.transcript-scroll', panel).scrollHeight : state.top));
     if (focus) {
       $('#main-content').focus({ preventScroll: true });
-      history.replaceState(null, '', `/?thread=${encodeURIComponent(panel.dataset.thread)}`);
+      history.replaceState(null, '', `./?thread=${encodeURIComponent(panel.dataset.thread)}`);
       if (!state.paused) htmx.trigger($('.poller', panel), 'refresh');
     }
   }

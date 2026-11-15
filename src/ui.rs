@@ -144,7 +144,7 @@ async fn shell(State(state): State<Arc<AppState>>, Query(params): Query<Params>)
         .map(|detail| render_panel(&detail, &snapshot))
         .unwrap_or_default();
     let mut html = String::from(
-        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"selfRequestsOnly":true}'><title>Threadwatch · Your agents, in focus</title><link rel="stylesheet" href="/static/style.css"><script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head><body><a class="skip-link" href="#main-content">Skip to thread</a><div class="app-shell"><header class="mobile-header"><button id="menu" aria-controls="thread-sidebar" aria-expanded="false">Threads</button><strong>threadwatch<span class="accent">.</span></strong></header><aside id="thread-sidebar" class="sidebar" aria-label="Threads"><header class="brand"><span class="brand-mark" aria-hidden="true">⌁</span><div><strong>threadwatch<span class="accent">.</span></strong><p>YOUR AGENTS, IN FOCUS</p></div></header><div class="sidebar-tools"><label class="search-field"><span class="sr-only">Search threads and bots</span><input id="thread-search" type="search" placeholder="Find a thread or bot…" autocomplete="off"></label><fieldset class="filter-tabs"><legend class="sr-only">Thread filter</legend><label><input type="radio" name="thread-filter" value="active" checked> Active</label><label><input type="radio" name="thread-filter" value="all"> All threads</label></fieldset></div><div id="index-data" hx-get="/ui/index" hx-trigger="every 2s" hx-swap="innerHTML" hx-sync="this:drop">"##,
+        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"selfRequestsOnly":true}'><title>Threadwatch · Your agents, in focus</title><link rel="stylesheet" href="static/style.css"><script src="static/htmx.min.js" defer></script><script src="static/app.js" defer></script></head><body><a class="skip-link" href="#main-content">Skip to thread</a><div class="app-shell"><header class="mobile-header"><button id="menu" aria-controls="thread-sidebar" aria-expanded="false">Threads</button><strong>threadwatch<span class="accent">.</span></strong></header><aside id="thread-sidebar" class="sidebar" aria-label="Threads"><header class="brand"><span class="brand-mark" aria-hidden="true">⌁</span><div><strong>threadwatch<span class="accent">.</span></strong><p>YOUR AGENTS, IN FOCUS</p></div></header><div class="sidebar-tools"><label class="search-field"><span class="sr-only">Search threads and bots</span><input id="thread-search" type="search" placeholder="Find a thread or bot…" autocomplete="off"></label><fieldset class="filter-tabs"><legend class="sr-only">Thread filter</legend><label><input type="radio" name="thread-filter" value="active" checked> Active</label><label><input type="radio" name="thread-filter" value="all"> All threads</label></fieldset></div><div id="index-data" hx-get="ui/index" hx-trigger="every 2s" hx-swap="innerHTML" hx-sync="this:drop">"##,
     );
     html.push_str(&render_index(&snapshot));
     html.push_str(r##"</div><p id="connection" class="connection" role="status">Connected to server · LAN</p><footer class="sidebar-footer">Read-only observer · 2s refresh</footer></aside><main id="main-content" tabindex="-1"><div id="request-error" class="notice" role="alert" hidden></div><div id="welcome" class="welcome"><span class="eyebrow">AGENT OBSERVABILITY</span><h1>A clear view of every thread.</h1><p>Select a thread to inspect its actual tasks, messages, and tool activity. Reporting sources remain visible even before their first thread.</p></div><div id="panels">"##);
@@ -209,7 +209,7 @@ fn render_index(snapshot: &Value) -> String {
             };
             let _ = write!(
                 html,
-                "<a class=\"thread-item\" data-thread=\"{}\" data-search=\"{} {}\" data-active=\"{}\" href=\"/?thread={}\" hx-get=\"/ui/thread?id={}\" hx-target=\"#detail-stage\" hx-swap=\"innerHTML\" hx-sync=\"#detail-stage:replace\"><strong>{}</strong><span class=\"thread-line\">{}<span>Updated {}</span></span></a>",
+                "<a class=\"thread-item\" data-thread=\"{}\" data-search=\"{} {}\" data-active=\"{}\" href=\"./?thread={}\" hx-get=\"ui/thread?id={}\" hx-target=\"#detail-stage\" hx-swap=\"innerHTML\" hx-sync=\"#detail-stage:replace\"><strong>{}</strong><span class=\"thread-line\">{}<span>Updated {}</span></span></a>",
                 escape(id),
                 escape(title),
                 escape(text(thread, "botName")),
@@ -296,7 +296,7 @@ fn render_panel(detail: &Value, snapshot: &Value) -> String {
     html.push_str("</div><p class=\"empty-events muted\">Nothing recorded yet.</p></div><footer class=\"transcript-footer\">Read-only · recorded messages &amp; tool activity · search covers loaded records only</footer></section></div>");
     let _ = write!(
         html,
-        "<div class=\"poller\" hx-get=\"/ui/poll?id={}\" hx-trigger=\"every 2s, refresh\" hx-target=\"#events-{k}\" hx-swap=\"beforeend\" aria-hidden=\"true\"></div></section>",
+        "<div class=\"poller\" hx-get=\"ui/poll?id={}\" hx-trigger=\"every 2s, refresh\" hx-target=\"#events-{k}\" hx-swap=\"beforeend\" aria-hidden=\"true\"></div></section>",
         url(id)
     );
     html
@@ -446,7 +446,7 @@ fn render_pager(detail: &Value, oob: bool) -> String {
     if let Some(cursor) = detail["nextCursor"].as_str() {
         let _ = write!(
             html,
-            "<button class=\"older\" hx-get=\"/ui/older?id={}&amp;before={}\" hx-target=\"#events-{k}\" hx-swap=\"afterbegin\" hx-disabled-elt=\"this\">Load older records</button>",
+            "<button class=\"older\" hx-get=\"ui/older?id={}&amp;before={}\" hx-target=\"#events-{k}\" hx-swap=\"afterbegin\" hx-disabled-elt=\"this\">Load older records</button>",
             url(id),
             url(cursor)
         );
