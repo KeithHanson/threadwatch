@@ -37,7 +37,7 @@ The server receives activity through collectors; it does not also import the sam
 
 Viewer access is explicitly trusted: `TW_LOCAL=1` defaults to `127.0.0.1:8787`. For a private network, also set `TW_LAN=1` and a specific private IPv4 `TW_HOST`. Allow TCP 8787 in the host firewall only from that trusted subnet. Wildcard/public unauthenticated binds and foreign Host/Origin requests are rejected.
 
-For this deployment, browse **http://192.168.192.73:8787**. Reachable ZeroTier peers can read all connected transcripts without login. HTTP is unencrypted; ZeroTier supplies transport encryption. No public tunnels or router forwarding.
+For this deployment, browse **http://192.168.192.183:8787**. Reachable ZeroTier peers can read all connected transcripts without login. HTTP is unencrypted; ZeroTier supplies transport encryption. No public tunnels or router forwarding.
 
 Browser-facing asset, navigation, and htmx URLs are relative, so a reverse proxy may publish the dashboard beneath a stripped path prefix such as `/threadwatch/`. The proxy must preserve the trailing slash on the entry URL. Set `TW_ALLOWED_HOSTS` to the proxy's comma-separated public hostnames when it preserves the original `Host` header.
 
@@ -92,6 +92,67 @@ Replace `SERVICE_USER` with the account owning the private environment file and 
 Inspect `systemctl status threadwatch.service` or `systemctl status threadwatch-collector.service`; use `journalctl -u` for their logs. Replace an installed executable by staging a new file and atomically renaming it, then restart services. Do not overwrite a running executable in place.
 
 For upgrades from Node, stop the old collector/server before starting Rust on the same databases. Back up SQLite with its backup API, not a raw copy of a live WAL database. Reuse the existing state and token files; remove the obsolete server-side `TW_BRIDGES_FILE` setting. The Discord bridge itself does not need restarting.
+
+### Services host: Infisical-managed startup
+
+[`deploy/infisical/`](deploy/infisical/) is the authoritative, versioned deployment for the **services host**, superseding the untracked `/home/services/threadwatch-migration` assets and historical host-specific copies. It contains complete `threadwatch.service` and `threadwatch-collector.service` units, plus `server-agent.yaml` and `collector-agent.yaml`. These are not Hephaestus units: the server is **http://192.168.192.183:8787**, and Infisical is local to services at **http://127.0.0.1:8086**. Services-bot owns installation, configuration, restarts, and runtime verification; repository changes alone do not deploy anything.
+
+#### Configuration and credentials
+
+Both agents read Threadwatch project `7075ad30-d9f4-47d0-ac63-bd3fcebe7cd1`, Development (`dev`):
+
+| Source | Destination |
+| --- | --- |
+| `/server` settings | `/run/threadwatch/server.env` |
+| `/collector` settings | `/run/threadwatch-collector/collector.env` |
+| `/file-credentials/TW_INGEST_TOKEN` | Each service's `/run/.../ingest-token` |
+
+The templates always write services-host overrides, even when those keys are absent from Infisical. They exclude those keys and inline `TW_INGEST_TOKEN` from the generic settings loop so there is exactly one selected ingestion-token mode:
+
+| Server override | Value |
+| --- | --- |
+| `TW_HOST` | `192.168.192.183` |
+| `TW_DATA_DIR` | `/home/services/.local/state/threadwatch` |
+| `TW_INGEST_TOKEN_FILE` | `/run/threadwatch/ingest-token` |
+
+| Collector override | Value |
+| --- | --- |
+| `TW_SERVER_URL` | `http://192.168.192.183:8787` |
+| `TW_BRIDGES_FILE` | `/home/services/.config/threadwatch/bridge.json` |
+| `TW_COLLECTOR_DATA_DIR` | `/home/services/.local/state/threadwatch-collector` |
+| `TW_INGEST_TOKEN_FILE` | `/run/threadwatch-collector/ingest-token` |
+
+Other settings remain in Infisical, including the server's required `TW_LOCAL=1`, `TW_LAN=1`, and `TW_PORT=8787`. The agent templates use Sprig `replace` to escape backslashes, double quotes, dollar signs, and newlines for Rust `dotenvy`; literal tabs, carriage returns, and Unicode remain inside double quotes. Go `printf "%q"` is not a dotenv encoder: it leaves dollar substitution active and can emit unsupported escapes such as `\t` and `\u`. This compatibility follows source inspection of [Infisical CLI 0.45.8's template functions](https://github.com/Infisical/cli/blob/v0.45.8/packages/templates/templates.go) and [dotenvy 0.15.7's parser](https://docs.rs/crate/dotenvy/0.15.7/source/src/parse.rs); test nonsecret representative values before activation. Infisical's own secret-reference expansion still applies.
+
+Both units intentionally use the existing root-owned mode-0600 `/etc/threadwatch/credentials/server-client-id` and `server-client-secret`, under a root-only mode-0700 directory. Despite their historical filenames, these bootstrap credentials serve both services with read-only access to the Threadwatch project. `LoadCredential` maps them to `client-id` and `client-secret`; each YAML reads `/run/credentials/<unit-name>/client-id` and `client-secret`. Do not copy credentials into this repository, unit environment variables, logs, or service-user-readable persistent files. No Discord-project access is needed.
+
+The services collector's bridge configuration retains its own stable ID, bridge database, and session paths. Its optional `botTokenFile` may point to an independently provisioned services-bot token readable only by the appropriate service account. It is not rendered by these templates. **Never copy Hephaestus's Discord token** or point services at Hephaestus's token/project; omit `botTokenFile` if services has no token. Collection and delivery do not require Discord title/avatar lookup.
+
+#### Startup and independent bootstrap
+
+systemd runs both units as `services`, creates their mode-0700 runtime directories, and supplies the credentials. `/usr/local/bin/infisical agent --config=/etc/threadwatch/{server,collector}-agent.yaml` runs once in `ExecStartPre`: authenticate, render, revoke its access token, then exit. The next pre-start command sets mode 0600 on both outputs. `/usr/local/bin/threadwatch --env-file <runtime-env> serve` or `collect` then starts with the selected file. No Rust SDK, persistent access-token sink, background refresh agent, or shell-sourced environment is involved.
+
+The units retain `UMask=0077`, `NoNewPrivileges=true`, `PrivateTmp=true`, 90-second startup and 30-second stop timeouts, and failure restart after five seconds. They order after network-online, Docker, and ZeroTier; ordering does **not** prove Infisical or the ZeroTier address is ready. Cold starts fail without successfully rendered configuration; there is no stale-file fallback. Already-running processes keep their loaded values during an Infisical outage. After repairing a prolonged outage, services-bot may need `systemctl reset-failed` before restarting if systemd rate-limited failures.
+
+Infisical must boot independently of Threadwatch and of secrets stored only in Infisical itself. Services-bot must retain root-protected, independently recoverable Infisical bootstrap configuration, encryption/authentication keys, and datastore credentials, plus consistent persistent-data backups. Keep machine Universal Auth credentials recoverable as well. An Infisical database backup without its encryption key is insufficient; never put the sole recovery copy behind the system it must recover.
+
+#### Migration and activation (services-bot only)
+
+1. Select a reviewed repository revision for these four assets. Inventory the actually installed Threadwatch executable/release and effective units/drop-ins; do not assume local `main` or `target/release/threadwatch` matches the deployed release. This configuration migration does not require rebuilding or replacing the application binary.
+2. **Before installing**, make a timestamped, root-only backup of the selected installed units, their drop-in directories (including any `infisical.conf`), both `/etc/threadwatch/*-agent.yaml` files, the selected existing environment/token configuration, and `/home/services/.config/threadwatch/bridge.json`. Record which paths were absent, the effective unit settings, and enabled/running state. Protect any credential-bearing backup like the originals; do not print its contents. Preserve bootstrap credentials without rotating them as part of this change.
+3. Record the live server's thread/event/receipt counts and collector queue/heartbeat state. Preserve `/home/services/.local/state/threadwatch/threadwatch.sqlite` and `/home/services/.local/state/threadwatch-collector` in place, including queue/checkpoint data and delivery IDs. If taking a database recovery backup, use SQLite's backup API or a cleanly stopped, checkpointed database, not a raw copy of a live WAL database.
+4. Confirm the service account can access its existing state and bridge paths, the installed CLI supports the templates (source-compatible with 0.45.8), and the identity can read the required project paths. Check Infisical availability without exposing credentials. Stop only the affected Threadwatch units for cutover; do not restart the Discord bridge, discard queues, change bot IDs, rotate the shared ingestion token, or start a second collector on the same state directory.
+5. Install the reviewed YAML files as root-owned mode 0644 `/etc/threadwatch/server-agent.yaml` and `/etc/threadwatch/collector-agent.yaml`; their parent must allow `services` traversal/read while `credentials/` remains root-only. Install the complete units as root-owned mode 0644 `/etc/systemd/system/threadwatch.service` and `/etc/systemd/system/threadwatch-collector.service`. Retire only backed-up drop-ins superseded by these complete units; otherwise an old `ExecStart` reset or additive `ExecStartPre` can silently override the new deployment. Preserve unrelated drop-ins and review their effective interaction.
+6. Run `systemd-analyze verify` on the installed units, then `systemctl daemon-reload`. Enable the intended units for boot; start the server first, verify it, then start the collector. **Do not run `threadwatch install-service`** for this deployment: the generic installer would overwrite these credential-aware units.
+7. Verify the effective commands select the `/run` environment files, both runtime directories are 0700 and generated files 0600 owned by `services`, and both agent pre-start commands succeed. Compare required values privately/in memory, never by dumping rendered files or credentials. Verify `http://192.168.192.183:8787`, fresh ready heartbeats, queue drainage with stable delivery IDs, and no loss of stored threads/events/receipts. Check the existing gateway/dashboard and confirm the Discord bridge was not restarted. A successful startup is not a reboot/outage drill; report those separately.
+
+For later settings changes, edit the appropriate Infisical folder and restart only the affected unit. Coordinate ingestion-token rotation with **every** collector; rendering a new token on one service alone breaks delivery. Other collector hosts retain their own identities, paths, and queues; these services-host units must not be copied onto them unchanged.
+
+#### Rollback
+
+Stop the affected Threadwatch units, restore the backed-up selected units, drop-ins, agent YAML, bridge configuration, and any previous environment/token files needed by that configuration with their original ownership/modes. Remove only newly installed configuration paths recorded as previously absent. Restore any separately changed binary only from a known compatible release; do not substitute a convenient local build. Reload systemd, restore the recorded enabled state, and start/verify the server before the collector as above.
+
+Rollback restores **configuration files, not stale databases or queues**. Keep the authoritative server database and collector state containing all post-cutover writes, delivery receipts, IDs, and checkpoints. Do not restart the frozen pre-migration server database or repoint a queue to it. A database reverse migration requires a separate coordinated, consistent procedure. If the old configuration also depends on Infisical, restoring it cannot repair an Infisical outage: recover Infisical from its independent bootstrap/backup first.
 
 
 ## Connecting other runners

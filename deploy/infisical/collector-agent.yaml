@@ -1,0 +1,23 @@
+infisical:
+  address: http://127.0.0.1:8086
+  exit-after-auth: true
+  revoke-credentials-on-shutdown: true
+auth:
+  type: universal-auth
+  config:
+    client-id: /run/credentials/threadwatch-collector.service/client-id
+    client-secret: /run/credentials/threadwatch-collector.service/client-secret
+templates:
+  - destination-path: /run/threadwatch-collector/collector.env
+    template-content: |
+      {{- range listSecrets "7075ad30-d9f4-47d0-ac63-bd3fcebe7cd1" "dev" "/collector" }}
+      {{- if and (ne .Key "TW_SERVER_URL") (ne .Key "TW_INGEST_TOKEN_FILE") (ne .Key "TW_INGEST_TOKEN") (ne .Key "TW_BRIDGES_FILE") (ne .Key "TW_COLLECTOR_DATA_DIR") }}
+      {{ .Key }}="{{ .Value | replace "\\" "\\\\" | replace "\"" "\\\"" | replace "$" "\\$" | replace "\n" "\\n" }}"
+      {{- end }}
+      {{- end }}
+      TW_SERVER_URL="http://192.168.192.183:8787"
+      TW_INGEST_TOKEN_FILE="/run/threadwatch-collector/ingest-token"
+      TW_BRIDGES_FILE="/home/services/.config/threadwatch/bridge.json"
+      TW_COLLECTOR_DATA_DIR="/home/services/.local/state/threadwatch-collector"
+  - destination-path: /run/threadwatch-collector/ingest-token
+    template-content: '{{ with getSecretByName "7075ad30-d9f4-47d0-ac63-bd3fcebe7cd1" "dev" "/file-credentials" "TW_INGEST_TOKEN" }}{{ .Value }}{{ end }}'
