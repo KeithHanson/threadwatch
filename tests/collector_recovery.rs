@@ -700,6 +700,7 @@ async fn network_receiver(
             local: true,
             lan: false,
             host: "127.0.0.1".into(),
+            allowed_hosts: Vec::new(),
             port: address.port(),
             ingest_token: TOKEN.into(),
             data_dir: fixture._root.path().join("server"),

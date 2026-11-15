@@ -18,6 +18,7 @@ fn config(path: &std::path::Path) -> Config {
         local: true,
         lan: false,
         host: "127.0.0.1".into(),
+        allowed_hosts: Vec::new(),
         port: 8787,
         ingest_token: TOKEN.into(),
         data_dir: path.to_owned(),
@@ -89,6 +90,22 @@ fn configuration_fails_closed_and_keeps_safe_loopback_default() {
         assert!(environment(&[("TW_LOCAL", "1"), ("TW_LAN", "1"), ("TW_HOST", host)]).is_ok());
     }
     assert!(environment(&[("TW_LAN", "1"), ("TW_HOST", "192.168.10.5")]).is_err());
+    assert!(environment(&[
+        ("TW_LOCAL", "1"),
+        ("TW_LAN", "1"),
+        ("TW_HOST", "192.168.10.5"),
+        ("TW_ALLOWED_HOSTS", "agent-portal.keithhanson.io, portal.example"),
+    ])
+    .is_ok());
+    for allowed_hosts in ["portal.example/path", "portal.example:443", "portal example"] {
+        assert!(environment(&[
+            ("TW_LOCAL", "1"),
+            ("TW_LAN", "1"),
+            ("TW_HOST", "192.168.10.5"),
+            ("TW_ALLOWED_HOSTS", allowed_hosts),
+        ])
+        .is_err());
+    }
     for port in ["0", "65536", "-1", "1.5", "abc", "+8787"] {
         assert!(environment(&[("TW_LOCAL", "1"), ("TW_PORT", port)]).is_err());
     }
@@ -211,6 +228,18 @@ async fn every_route_checks_actual_peer_host_origin_and_cross_site_requests() {
             .insert(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
         assert_eq!(send(&app, req).await.0, expected);
     }
+    let mut cfg = config(dir.path());
+    cfg.lan = true;
+    cfg.host = "192.168.10.5".into();
+    cfg.allowed_hosts = vec!["agent-portal.keithhanson.io".into()];
+    let app = server::router(Arc::new(AppState::new(cfg).unwrap()));
+    let mut req = request("GET", "/api/config", Body::empty());
+    req.headers_mut()
+        .insert("host", "agent-portal.keithhanson.io".parse().unwrap());
+    req.extensions_mut().insert(ConnectInfo(
+        "192.168.192.170:40000".parse::<SocketAddr>().unwrap(),
+    ));
+    assert_eq!(send(&app, req).await.0, StatusCode::OK);
     assert_eq!(
         send(&app, request("GET", "/api/config", Body::empty()))
             .await

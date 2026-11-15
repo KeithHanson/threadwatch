@@ -17,6 +17,7 @@ fn config(path: &std::path::Path) -> Config {
         local: true,
         lan: false,
         host: "127.0.0.1".into(),
+        allowed_hosts: Vec::new(),
         port: 8787,
         ingest_token: "migration-test-shared-secret-long-enough".into(),
         data_dir: path.to_owned(),

@@ -35,17 +35,18 @@ threadwatch --env-file /absolute/path/server.env serve
 
 The server receives activity through collectors; it does not also import the same bridge directly. `TW_DATA_DIR` holds `threadwatch.sqlite`. Existing stored threads, delivery receipts, and heartbeat records are reused.
 
-Viewer access is explicitly trusted: `TW_LOCAL=1` defaults to `127.0.0.1:8787`. For the LAN, also set `TW_LAN=1` and a specific private IPv4 `TW_HOST`. Allow TCP 8787 in the host firewall only from the trusted subnet. Wildcard/public unauthenticated binds and foreign Host/Origin requests are rejected.
+Viewer access is explicitly trusted: `TW_LOCAL=1` defaults to `127.0.0.1:8787`. For a private network, also set `TW_LAN=1` and a specific private IPv4 `TW_HOST`. Allow TCP 8787 in the host firewall only from that trusted subnet. Wildcard/public unauthenticated binds and foreign Host/Origin requests are rejected.
 
-For this deployment, browse **http://192.168.10.5:8787**. Reachable LAN devices can read all connected transcripts without login. HTTP is unencrypted. No public tunnels or router forwarding.
+For this deployment, browse **http://192.168.192.73:8787**. Reachable ZeroTier peers can read all connected transcripts without login. HTTP is unencrypted; ZeroTier supplies transport encryption. No public tunnels or router forwarding.
 
-Browser-facing asset, navigation, and htmx URLs are relative, so a reverse proxy may publish the dashboard beneath a stripped path prefix such as `/threadwatch/`. The proxy must preserve the trailing slash on the entry URL.
+Browser-facing asset, navigation, and htmx URLs are relative, so a reverse proxy may publish the dashboard beneath a stripped path prefix such as `/threadwatch/`. The proxy must preserve the trailing slash on the entry URL. Set `TW_ALLOWED_HOSTS` to the proxy's comma-separated public hostnames when it preserves the original `Host` header.
 
 | Variable | Purpose |
 | --- | --- |
 | `TW_LOCAL` | Required `1` for trusted viewing. |
 | `TW_LAN` | Optional `1` to allow private-network peers on a private IPv4 bind. |
 | `TW_HOST`, `TW_PORT` | Defaults `127.0.0.1:8787`. |
+| `TW_ALLOWED_HOSTS` | Optional comma-separated public reverse-proxy hostnames accepted in addition to `TW_HOST`. |
 | `TW_DATA_DIR` | Central server database directory. |
 | `TW_INGEST_TOKEN_FILE` | Private shared ingestion-token file. |
 | `TW_INGEST_TOKEN` | Alternative inline environment token; do not set both token options. |
