@@ -1,0 +1,22 @@
+infisical:
+  address: http://127.0.0.1:8086
+  exit-after-auth: true
+  revoke-credentials-on-shutdown: true
+auth:
+  type: universal-auth
+  config:
+    client-id: /run/credentials/threadwatch.service/client-id
+    client-secret: /run/credentials/threadwatch.service/client-secret
+templates:
+  - destination-path: /run/threadwatch/server.env
+    template-content: |
+      {{- range listSecrets "<PROJECT_ID>" "dev" "/server" }}
+      {{- if and (ne .Key "TW_HOST") (ne .Key "TW_DATA_DIR") (ne .Key "TW_INGEST_TOKEN_FILE") (ne .Key "TW_INGEST_TOKEN") }}
+      {{ .Key }}="{{ .Value | replace "\\" "\\\\" | replace "\"" "\\\"" | replace "$" "\\$" | replace "\n" "\\n" }}"
+      {{- end }}
+      {{- end }}
+      TW_HOST="192.0.2.10"
+      TW_DATA_DIR="/var/lib/threadwatch"
+      TW_INGEST_TOKEN_FILE="/run/threadwatch/ingest-token"
+  - destination-path: /run/threadwatch/ingest-token
+    template-content: '{{ with getSecretByName "<PROJECT_ID>" "dev" "/file-credentials" "TW_INGEST_TOKEN" }}{{ .Value }}{{ end }}'

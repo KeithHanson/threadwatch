@@ -6,6 +6,9 @@
 - Sort agents alphabetically and their threads by last update, most recent first; unknown update times sort last.
 - Use relative browser URLs so the dashboard works beneath a stripped reverse-proxy path prefix.
 - Allow explicitly configured reverse-proxy hostnames while retaining private-peer checks.
+- Version the services-host Infisical Agent configurations and complete systemd units, with private runtime files and systemd bootstrap credentials for both server and collector.
+- Always render host-specific path/endpoint overrides, exclude conflicting inline ingestion tokens, and escape other settings for Rust dotenvy rather than Go string literals.
+- Document services-bot activation, independent Infisical recovery, and configuration-only rollback without replacing live databases, collector queues, or delivery IDs.
 
 ## 0.2.0
 

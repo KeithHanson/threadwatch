@@ -1,0 +1,28 @@
+[Unit]
+Description=Threadwatch server
+Wants=network-online.target docker.service
+After=network-online.target docker.service zerotier-one.service
+
+[Service]
+Type=simple
+User=threadwatch
+WorkingDirectory=/var/lib/threadwatch
+RuntimeDirectory=threadwatch
+RuntimeDirectoryMode=0700
+LoadCredential=client-id:/etc/threadwatch/credentials/client-id
+LoadCredential=client-secret:/etc/threadwatch/credentials/client-secret
+Environment=INFISICAL_DISABLE_UPDATE_CHECK=true
+Environment=DO_NOT_TRACK=1
+ExecStartPre=/usr/local/bin/infisical agent --config=/etc/threadwatch/server-agent.yaml
+ExecStartPre=/usr/bin/chmod 0600 /run/threadwatch/server.env /run/threadwatch/ingest-token
+ExecStart=/usr/local/bin/threadwatch --env-file /run/threadwatch/server.env serve
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=90
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
