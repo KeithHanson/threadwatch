@@ -39,6 +39,8 @@ Viewer access is explicitly trusted: `TW_LOCAL=1` defaults to `127.0.0.1:8787`. 
 
 For this deployment, browse **http://192.168.10.5:8787**. Reachable LAN devices can read all connected transcripts without login. HTTP is unencrypted. No public tunnels or router forwarding.
 
+Browser-facing asset, navigation, and htmx URLs are relative, so a reverse proxy may publish the dashboard beneath a stripped path prefix such as `/threadwatch/`. The proxy must preserve the trailing slash on the entry URL.
+
 | Variable | Purpose |
 | --- | --- |
 | `TW_LOCAL` | Required `1` for trusted viewing. |
