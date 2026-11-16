@@ -21,6 +21,52 @@ pub fn thread_id(kind: &str, bot: &str, thread: &str) -> String {
     URL_SAFE_NO_PAD.encode(serde_json::to_vec(&[kind, bot, thread]).expect("string array"))
 }
 
+/// Only canonical Discord user-avatar URLs may cross the collector boundary.
+pub fn valid_avatar_url(url: &str) -> bool {
+    let Some(path) = url.strip_prefix("https://cdn.discordapp.com/avatars/") else {
+        return false;
+    };
+    let Some((user, image)) = path.split_once('/') else {
+        return false;
+    };
+    let image = image.strip_suffix("?size=96").unwrap_or(image);
+    let Some(hash) = image.strip_suffix(".png") else {
+        return false;
+    };
+    let hash = hash.strip_prefix("a_").unwrap_or(hash);
+    (1..=20).contains(&user.len())
+        && user.bytes().all(|byte| byte.is_ascii_digit())
+        && hash.len() == 32
+        && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn short_title(thread: &Value) -> String {
+    thread["shortTitle"]
+        .as_str()
+        .filter(|title| !title.trim().is_empty())
+        .or_else(|| thread["title"].as_str())
+        .unwrap_or("Untitled thread")
+        .trim()
+        .chars()
+        .take(24)
+        .collect()
+}
+
+fn event_preview(event: Value) -> Value {
+    let text: String = event["text"]
+        .as_str()
+        .unwrap_or("")
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .chars()
+        .take(240)
+        .collect();
+    json!({"id": event["id"], "timestamp": event["timestamp"], "kind": event["kind"],
+        "role": event["role"], "name": event["name"], "text": text, "isError": event["isError"] == true})
+}
+
 /// Uses the original Node schema verbatim; receipts and import checkpoints survive migration.
 pub struct Store {
     db: Connection,
@@ -187,6 +233,9 @@ impl Store {
         if let Some(error) = heartbeat.get("error") {
             payload["error"] = error.clone();
         }
+        if let Some(avatar) = heartbeat["avatarUrl"].as_str().filter(|url| valid_avatar_url(url)) {
+            payload["avatarUrl"] = json!(avatar);
+        }
         let tx = self
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -222,9 +271,31 @@ impl Store {
     }
 
     pub fn list(&self) -> Result<Vec<Value>> {
-        let mut statement = self.db.prepare_cached("SELECT payload FROM threads WHERE source LIKE 'ingest:%' ORDER BY json_extract(payload,'$.updatedAt') DESC, id")?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
-        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+        // Counts use the covering thread/sequence index; only the final record's
+        // payload is loaded, never a thread's transcript or detail page.
+        let mut statement = self.db.prepare_cached(
+            "SELECT t.payload, json_array_length(t.todos),
+                (SELECT COUNT(*) FROM json_each(t.todos) WHERE json_extract(value,'$.status')='completed'),
+                (SELECT COUNT(*) FROM events WHERE thread_id=t.id),
+                (SELECT payload FROM events WHERE thread_id=t.id ORDER BY seq DESC LIMIT 1)
+             FROM threads t WHERE t.source LIKE 'ingest:%'
+             ORDER BY json_extract(t.payload,'$.updatedAt') DESC, t.id",
+        )?;
+        let mut rows = statement.query([])?;
+        let mut threads = Vec::new();
+        while let Some(row) = rows.next()? {
+            let mut thread: Value = serde_json::from_str(&row.get::<_, String>(0)?)?;
+            thread["shortTitle"] = json!(short_title(&thread));
+            thread["todoCount"] = json!(row.get::<_, i64>(1)?);
+            thread["todoCompleted"] = json!(row.get::<_, i64>(2)?);
+            thread["eventCount"] = json!(row.get::<_, i64>(3)?);
+            thread["latestEvent"] = match row.get::<_, Option<String>>(4)? {
+                Some(payload) => event_preview(serde_json::from_str(&payload)?),
+                None => Value::Null,
+            };
+            threads.push(thread);
+        }
+        Ok(threads)
     }
 
     pub fn detail(&self, id: &str, before: Option<&str>, limit: usize) -> Result<Option<Value>> {
@@ -232,24 +303,25 @@ impl Store {
             bail!("limit must be between 1 and 500");
         }
         let boundary = decode_cursor(id, before)?;
-        let current = self
-            .db
+        let snapshot = self.db.unchecked_transaction()?;
+        let current = snapshot
             .query_row(
-                "SELECT payload,todos,revision FROM threads WHERE id=? AND source LIKE 'ingest:%'",
+                "SELECT payload,todos,revision,(SELECT COUNT(*) FROM events WHERE thread_id=threads.id) FROM threads WHERE id=? AND source LIKE 'ingest:%'",
                 [id],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((payload, todos, revision)) = current else {
+        let Some((payload, todos, revision, event_count)) = current else {
             return Ok(None);
         };
-        let mut statement = self.db.prepare_cached(
+        let mut statement = snapshot.prepare_cached(
             "SELECT seq,payload FROM events WHERE thread_id=? AND seq<? ORDER BY seq DESC LIMIT ?",
         )?;
         let mut rows = statement.query(params![id, boundary, (limit + 1) as i64])?;
@@ -271,7 +343,7 @@ impl Store {
             None
         };
         Ok(Some(
-            json!({"thread": serde_json::from_str::<Value>(&payload)?, "todos": serde_json::from_str::<Value>(&todos)?, "events": events.into_iter().map(|(_, value)| value).collect::<Vec<_>>(), "nextCursor": next, "revision": revision.to_string()}),
+            json!({"thread": serde_json::from_str::<Value>(&payload)?, "todos": serde_json::from_str::<Value>(&todos)?, "events": events.into_iter().map(|(_, value)| value).collect::<Vec<_>>(), "nextCursor": next, "revision": revision.to_string(), "eventCount": event_count}),
         ))
     }
 }

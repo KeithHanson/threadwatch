@@ -394,6 +394,16 @@ pub fn validate_ingest(input: &Value, sanitizer: &Sanitizer) -> ApiResult<Value>
         }
         thread["titleSource"] = source.clone();
     }
+    if let Some(title) = data.get("shortTitle") {
+        let title = sanitizer.text(string(title, "shortTitle", 1000)?);
+        thread["shortTitle"] = json!(title.trim().chars().take(24).collect::<String>());
+    }
+    if !data["avatarUrl"].is_null() {
+        let avatar = data["avatarUrl"].as_str()
+            .filter(|url| store::valid_avatar_url(url) && sanitizer.text(url) == *url)
+            .ok_or_else(|| ApiError::bad("Invalid avatarUrl"))?;
+        thread["avatarUrl"] = json!(avatar);
+    }
     let mut ids = HashSet::with_capacity(events.len());
     let mut normalized = Vec::with_capacity(events.len());
     for event in events {
@@ -437,6 +447,22 @@ pub fn validate_ingest(input: &Value, sanitizer: &Sanitizer) -> ApiResult<Value>
                 record["isError"] = json!(true);
             }
         }
+        for key in ["toolCallId", "sessionId"] {
+            if let Some(value) = event.get(key) {
+                identifier(value, key, crate::sanitize::TOOL_ID_LIMIT, sanitizer)?;
+            }
+        }
+        if let Some(arguments) = event.get("arguments") {
+            if !crate::sanitize::valid_tool_arguments(arguments) {
+                return Err(ApiError::bad("Invalid tool arguments: expected a bounded object"));
+            }
+        }
+        if let Some(intent) = event.get("intent") {
+            if !intent.as_str().is_some_and(|text| text.encode_utf16().count() <= crate::sanitize::TOOL_INTENT_LIMIT) {
+                return Err(ApiError::bad("Invalid tool intent"));
+            }
+        }
+        crate::sanitize::normalize_tool_metadata(event, &mut record, sanitizer);
         normalized.push(record);
     }
     let mut output = json!({"thread": thread, "events": normalized});
@@ -482,6 +508,12 @@ pub fn validate_heartbeat(input: &Value, sanitizer: &Sanitizer) -> ApiResult<Val
     let pending = safe_integer(&input["pendingBatches"])
         .ok_or_else(|| ApiError::bad("Invalid pendingBatches"))?;
     let mut heartbeat = json!({"botId": bot, "botName": name, "status": input["status"], "pendingBatches": pending});
+    if !input["avatarUrl"].is_null() {
+        let avatar = input["avatarUrl"].as_str()
+            .filter(|url| store::valid_avatar_url(url) && sanitizer.text(url) == *url)
+            .ok_or_else(|| ApiError::bad("Invalid avatarUrl"))?;
+        heartbeat["avatarUrl"] = json!(avatar);
+    }
     if let Some(error) = input.get("error") {
         string(error, "error", 1000)?;
         heartbeat["error"] = json!("Collector reported a collection or delivery error.");
@@ -714,7 +746,7 @@ async fn guard(State(state): State<Arc<AppState>>, request: Request, next: Next)
         ("cache-control", "no-store"),
         (
             "content-security-policy",
-            "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+            "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: https://cdn.discordapp.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
         ),
     ] {
         response

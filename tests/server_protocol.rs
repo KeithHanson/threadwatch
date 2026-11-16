@@ -352,12 +352,14 @@ async fn ingestion_authentication_body_limits_and_sanitization_precede_persisten
         .unwrap();
     assert_eq!(response.headers()["x-content-type-options"], "nosniff");
     assert_eq!(response.headers()["cache-control"], "no-store");
-    assert!(
-        !response.headers()["content-security-policy"]
-            .to_str()
-            .unwrap()
-            .contains("discord")
-    );
+    let policy = response.headers()["content-security-policy"].to_str().unwrap();
+    let directives: HashMap<_, Vec<_>> = policy.split(';').filter_map(|directive| {
+        let mut parts = directive.split_whitespace();
+        Some((parts.next()?, parts.collect()))
+    }).collect();
+    assert_eq!(directives["img-src"], ["'self'", "data:", "https://cdn.discordapp.com"]);
+    assert_eq!(directives["script-src"], ["'self'"]);
+    assert_eq!(directives["connect-src"], ["'self'"]);
 }
 
 #[test]
@@ -443,6 +445,63 @@ fn validation_preserves_unknown_timestamps_and_rejects_unsafe_fields() {
     assert!(server::validate_ingest(&too_many, &sanitizer).is_err());
 }
 
+#[test]
+fn avatar_metadata_is_strictly_validated_and_survives_storage() {
+    let sanitizer = Sanitizer::new(vec![TOKEN.into()]);
+    let base = "https://cdn.discordapp.com/avatars/123456789012345678/0123456789abcdef0123456789abcdef.png";
+    let mut input = batch();
+    let mut heartbeat = json!({"botId":"bot","botName":"Collector","status":"ready","pendingBatches":0});
+    for avatar in [base.to_owned(), format!("{base}?size=96"),
+        base.replace("/0123456789abcdef", "/a_0123456789abcdef")]
+    {
+        input["thread"]["avatarUrl"] = json!(avatar);
+        heartbeat["avatarUrl"] = json!(avatar);
+        assert_eq!(server::validate_ingest(&input, &sanitizer).unwrap()["thread"]["avatarUrl"], avatar);
+        assert_eq!(server::validate_heartbeat(&heartbeat, &sanitizer).unwrap()["avatarUrl"], avatar);
+    }
+    for avatar in [
+        json!("javascript:alert(1)"), json!(true), json!({}), json!(""),
+        json!(base.replace("https:", "http:")),
+        json!(base.replace("cdn.discordapp.com", "cdn.discordapp.com.attacker.test")),
+        json!(base.replace("cdn.discordapp.com", "user@cdn.discordapp.com")),
+        json!(base.replace("cdn.discordapp.com", "cdn.discordapp.com:443")),
+        json!(base.replace("/avatars/", "/attachments/")),
+        json!(base.replace("/123456789012345678/", "/../")),
+        json!(base.replace("/123456789012345678/", "/%31/")),
+        json!(base.replace(".png", ".svg")),
+        json!(format!("{base}?size=96&token=secret")),
+        json!(format!("{base}#fragment")),
+        json!(format!("{base}?size=4096")),
+        json!(base.replace("0123456789abcdef0123456789abcdef", "not-an-avatar")),
+    ] {
+        input["thread"]["avatarUrl"] = avatar.clone();
+        heartbeat["avatarUrl"] = avatar;
+        assert!(server::validate_ingest(&input, &sanitizer).is_err());
+        assert!(server::validate_heartbeat(&heartbeat, &sanitizer).is_err());
+    }
+    input["thread"]["avatarUrl"] = Value::Null;
+    heartbeat["avatarUrl"] = Value::Null;
+    assert!(server::validate_ingest(&input, &sanitizer).unwrap()["thread"].get("avatarUrl").is_none());
+    assert!(server::validate_heartbeat(&heartbeat, &sanitizer).unwrap().get("avatarUrl").is_none());
+    input["thread"]["avatarUrl"] = json!(base);
+    input["thread"]["shortTitle"] = json!("😀".repeat(30));
+    heartbeat["avatarUrl"] = json!(base);
+    let normalized = server::validate_ingest(&input, &sanitizer).unwrap();
+    assert_eq!(normalized["thread"]["shortTitle"], "😀".repeat(24));
+    let heartbeat = server::validate_heartbeat(&heartbeat, &sanitizer).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = threadwatch::store::Store::open(directory.path()).unwrap();
+    store.ingest(normalized["thread"].clone(), normalized["events"].as_array().unwrap(),
+        normalized.get("todos"), None).unwrap();
+    store.record_heartbeat(&heartbeat, 1000).unwrap();
+    drop(store);
+    let state = AppState::new(config(directory.path())).unwrap();
+    let index = state.index_at(1000).unwrap();
+    assert_eq!(index["threads"][0]["avatarUrl"], base);
+    assert_eq!(index["sources"][0]["avatarUrl"], base);
+    assert_eq!(index["threads"][0]["shortTitle"], "😀".repeat(24));
+}
+
 #[tokio::test]
 async fn heartbeat_survives_restart_and_never_persists_remote_error_details() {
     let dir = tempfile::tempdir().unwrap();
@@ -484,4 +543,97 @@ async fn heartbeat_survives_restart_and_never_persists_remote_error_details() {
         invalid[field] = value;
         assert!(server::validate_heartbeat(&invalid, &sanitizer).is_err());
     }
+}
+
+#[test]
+fn tool_metadata_validation_bounds_and_sanitizes_untrusted_inputs() {
+    let sanitizer = Sanitizer::new(vec![TOKEN.into()]);
+    let mut input = batch();
+    input["events"][0] = json!({
+        "id":"tool", "kind":"tool_call", "timestamp":0, "text":"Original tool record",
+        "toolCallId":"native-call", "sessionId":"native-session",
+        "intent":format!("Inspect source {TOKEN}"),
+        "arguments":{
+            "command":"printf '<script>alert(1)</script>'",
+            "nested":{"apiKey":"HIDDEN_SECRET","analysis":"HIDDEN_REASONING"},
+            "__proto__":{"polluted":true}, "constructor":{"prototype":{"polluted":true}},
+            "providerPayload":{"text":"HIDDEN_PROVIDER"},
+            (TOKEN):"HIDDEN_KEY_VALUE"
+        }
+    });
+    let normalized = server::validate_ingest(&input, &sanitizer).unwrap();
+    let event = &normalized["events"][0];
+    assert_eq!(event["text"], "Original tool record");
+    assert_eq!(event["toolCallId"], "native-call");
+    assert_eq!(event["sessionId"], "native-session");
+    assert_eq!(event["arguments"]["command"], "printf '<script>alert(1)</script>'");
+    assert_eq!(event["arguments"]["nested"]["apiKey"], "[REDACTED]");
+    assert!(event["arguments"].get("__proto__").is_none());
+    assert!(event["arguments"].get("constructor").is_none());
+    assert!(!event.to_string().contains("HIDDEN_"));
+    assert!(!event.to_string().contains(TOKEN));
+    for (key, value) in [
+        ("toolCallId", json!("")),
+        ("toolCallId", json!("x".repeat(201))),
+        ("sessionId", json!("x\nbad")),
+        ("sessionId", json!(TOKEN)),
+        ("sessionId", Value::Null),
+        ("arguments", json!("not an object")),
+        ("arguments", json!([])),
+        ("arguments", json!({"command":"x".repeat(64 * 1024)})),
+        ("intent", json!("x".repeat(4001))),
+        ("intent", json!({})),
+    ] {
+        let mut invalid = input.clone();
+        invalid["events"][0][key] = value;
+        assert!(server::validate_ingest(&invalid, &sanitizer).is_err(), "{key}");
+    }
+    let mut deep = json!({});
+    for _ in 0..32 {
+        deep = json!({"nested":deep});
+    }
+    input["events"][0]["arguments"] = deep;
+    assert!(server::validate_ingest(&input, &sanitizer).is_err());
+    input["events"][0]["arguments"] = json!({"items":vec![0; 4096]});
+    assert!(server::validate_ingest(&input, &sanitizer).is_err());
+}
+
+#[tokio::test]
+async fn receiver_keeps_scoped_tool_records_and_never_resurrects_withheld_inputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let app = server::router(Arc::new(AppState::new(cfg.clone()).unwrap()));
+    let mut input = batch();
+    input["events"] = json!([
+        {"id":"call-a","kind":"tool_call","timestamp":0,"name":"bash","text":"Original record","toolCallId":"same","sessionId":"session-a","arguments":{"command":"pwd"},"intent":"Inspect directory"},
+        {"id":"start-a","kind":"tool_start","timestamp":1,"name":"bash","text":"Started","toolCallId":"same","sessionId":"session-a","arguments":{"command":"pwd"}},
+        {"id":"result-a","kind":"tool_result","timestamp":2,"name":"bash","text":"Output\npreserved","toolCallId":"same","sessionId":"session-a"},
+        {"id":"call-b","kind":"tool_call","timestamp":3,"text":"[WITHHELD: sensitive input]","toolCallId":"same","sessionId":"session-b","arguments":{"command":"MUST_NOT_REAPPEAR"},"intent":"MUST_NOT_REAPPEAR"},
+        {"id":"start-b","kind":"tool_start","timestamp":4,"text":"untrusted raw input","toolCallId":"same","sessionId":"session-b","arguments":{"command":"cat /tmp/.env"},"intent":"MUST_NOT_REAPPEAR"},
+        {"id":"legacy","kind":"tool_result","timestamp":5,"text":"Unpaired legacy output"}
+    ]);
+    assert_eq!(send(&app, post("/api/ingest", &input, Some(TOKEN))).await.0, StatusCode::OK);
+    drop(app);
+    let app = server::router(Arc::new(AppState::new(cfg).unwrap()));
+    let id = threadwatch::store::thread_id("ingest", "bot", "thread");
+    let (status, detail) = send(&app, request("GET", &format!("/api/threads/{id}"), Body::empty())).await;
+    assert_eq!(status, StatusCode::OK);
+    let events = detail["events"].as_array().unwrap();
+    assert_eq!(events.len(), 6);
+    for event in &events[..3] {
+        assert_eq!(event["toolCallId"], "same");
+        assert_eq!(event["sessionId"], "session-a");
+    }
+    assert_eq!(events[0]["arguments"], json!({"command":"pwd"}));
+    assert_eq!(events[2]["text"], "Output\npreserved");
+    for event in &events[3..5] {
+        assert_eq!(event["sessionId"], "session-b");
+        assert!(event["text"].as_str().unwrap().contains("[WITHHELD:"));
+        assert!(event.get("arguments").is_none());
+        assert!(event.get("intent").is_none());
+    }
+    assert!(events[5].get("sessionId").is_none());
+    assert!(events[5].get("toolCallId").is_none());
+    assert!(!detail.to_string().contains("MUST_NOT_REAPPEAR"));
+    assert!(!detail.to_string().contains("/tmp/.env"));
 }

@@ -109,7 +109,10 @@ impl Sanitizer {
                 items
                     .iter()
                     .filter_map(|(key, item)| {
-                        if RULES.hidden_key.is_match(key) {
+                        if RULES.hidden_key.is_match(key)
+                            || matches!(key.as_str(), "__proto__" | "prototype" | "constructor")
+                            || self.text(key) != *key
+                        {
                             None
                         } else {
                             Some((
@@ -210,6 +213,87 @@ pub fn sensitive_tool_call(part: &Value) -> bool {
         .or_else(|| part.get("args"))
         .unwrap_or(&Value::Null);
     RULES.sensitive.is_match(&arguments.to_string())
+        || part["intent"].as_str().is_some_and(|intent| RULES.sensitive.is_match(intent))
+}
+
+pub const TOOL_ID_LIMIT: usize = 200;
+pub const TOOL_INTENT_LIMIT: usize = 4000;
+pub const TOOL_ARGUMENT_LIMIT: usize = 64 * 1024;
+
+pub fn valid_tool_id(value: &str, sanitizer: &Sanitizer) -> bool {
+    !value.is_empty()
+        && value.encode_utf16().count() <= TOOL_ID_LIMIT
+        && !value.chars().any(char::is_control)
+        && sanitizer.text(value) == value
+}
+
+/// Bound structured metadata independently of the full event's splittable text.
+pub fn valid_tool_arguments(value: &Value) -> bool {
+    fn string_size(text: &str) -> usize {
+        2 + text.bytes().map(|byte| match byte {
+            b'"' | b'\\' => 2,
+            0..=31 => 6,
+            _ => 1,
+        }).sum::<usize>()
+    }
+    fn visit(value: &Value, depth: usize, bytes: &mut usize, nodes: &mut usize) -> bool {
+        if depth > 30 || *nodes == 0 {
+            return false;
+        }
+        *nodes -= 1;
+        let size = match value {
+            Value::String(text) => string_size(text),
+            Value::Object(_) | Value::Array(_) => 2,
+            _ => 32,
+        };
+        let Some(remaining) = bytes.checked_sub(size) else { return false };
+        *bytes = remaining;
+        match value {
+            Value::Object(items) => items.iter().all(|(key, item)| {
+                let Some(remaining) = bytes.checked_sub(string_size(key) + 2) else { return false };
+                *bytes = remaining;
+                visit(item, depth + 1, bytes, nodes)
+            }),
+            Value::Array(items) => items.iter().all(|item| {
+                let Some(remaining) = bytes.checked_sub(1) else { return false };
+                *bytes = remaining;
+                visit(item, depth + 1, bytes, nodes)
+            }),
+            _ => true,
+        }
+    }
+    let mut bytes = TOOL_ARGUMENT_LIMIT;
+    let mut nodes = 4096;
+    value.is_object() && visit(value, 0, &mut bytes, &mut nodes)
+}
+
+pub fn normalize_tool_metadata(event: &Value, normalized: &mut Value, sanitizer: &Sanitizer) {
+    if !matches!(event["kind"].as_str(), Some("tool_call" | "tool_start" | "tool_result")) {
+        return;
+    }
+    for key in ["toolCallId", "sessionId"] {
+        if let Some(id) = event[key].as_str().filter(|id| valid_tool_id(id, sanitizer)) {
+            normalized[key] = json!(id);
+        }
+    }
+    // Withholding is authoritative: never resurrect a hidden input in another field.
+    if event["text"].as_str().is_some_and(|text| text.contains("[WITHHELD:")) {
+        return;
+    }
+    if sensitive_tool_call(event) {
+        normalized["text"] = json!("[WITHHELD: tool arguments target a credential or instruction file]");
+        return;
+    }
+    if matches!(event["kind"].as_str(), Some("tool_call" | "tool_start")) {
+        if let Some(arguments) = event.get("arguments").filter(|value| valid_tool_arguments(value)) {
+            normalized["arguments"] = sanitizer.value(arguments);
+        }
+        if let Some(intent) = event["intent"].as_str()
+            .filter(|intent| intent.encode_utf16().count() <= TOOL_INTENT_LIMIT)
+        {
+            normalized["intent"] = json!(sanitizer.text(intent));
+        }
+    }
 }
 
 pub fn timestamp(value: &Value) -> u64 {
@@ -255,6 +339,7 @@ pub fn normalize_event(event: &Value, sanitizer: &Sanitizer) -> Option<Value> {
     if event["isError"] == true {
         normalized["isError"] = json!(true);
     }
+    normalize_tool_metadata(event, &mut normalized, sanitizer);
     Some(normalized)
 }
 
@@ -276,7 +361,8 @@ pub fn operational_record(
             if message["isError"] == true {
                 event["isError"] = json!(true);
             }
-            return vec![event];
+            event["toolCallId"] = message["toolCallId"].clone();
+            return normalize_event(&event, sanitizer).into_iter().collect();
         }
         let string_content;
         let content = if let Some(text) = message["content"].as_str() {
@@ -304,6 +390,9 @@ pub fn operational_record(
                     "message"
                 });
                 event["text"] = json!(text);
+                if role == "toolResult" {
+                    event["toolCallId"] = message["toolCallId"].clone();
+                }
                 if let Some(name) = message["toolName"].as_str() {
                     event["name"] = json!(sanitizer.text(name));
                 }
@@ -316,6 +405,7 @@ pub fn operational_record(
                 };
                 event["kind"] = json!("tool_call");
                 event["name"] = json!(sanitizer.text(name));
+                event["toolCallId"] = part["id"].clone();
                 event["text"] = if sensitive_tool_call(part) {
                     json!("[WITHHELD: tool arguments target a credential or instruction file]")
                 } else {
@@ -323,8 +413,14 @@ pub fn operational_record(
                     if let Some(intent) = part["intent"].as_str() {
                         arguments.insert("intent".into(), json!(sanitizer.text(intent)));
                     }
-                    if let Some(value) = part.get("arguments") {
+                    if let Some(value) = part.get("arguments").or_else(|| part.get("args")) {
                         arguments.insert("arguments".into(), sanitizer.value(value));
+                    }
+                    if let Some(value) = part.get("arguments").or_else(|| part.get("args")) {
+                        event["arguments"] = value.clone();
+                    }
+                    if let Some(intent) = part.get("intent") {
+                        event["intent"] = intent.clone();
                     }
                     json!(serde_json::to_string_pretty(&arguments).unwrap())
                 };
@@ -346,7 +442,7 @@ pub fn operational_record(
     } else if record["type"] == "custom" && record["customType"] == "tool_execution_start" {
         let data = &record["data"];
         if let Some(name) = data["toolName"].as_str() {
-            let text = if sensitive_tool_call(data) {
+            let text = if withheld || sensitive_tool_call(data) {
                 "[WITHHELD: tool arguments target a credential or instruction file]".to_owned()
             } else {
                 let visible: Map<String, Value> = [
@@ -361,8 +457,17 @@ pub fn operational_record(
                 .collect();
                 sanitizer.value(&Value::Object(visible)).to_string()
             };
-            events.push(json!({"id": format!("{line}:start"), "timestamp": time, "kind": "tool_start", "name": sanitizer.text(name), "text": text}));
+            let mut event = json!({"id": format!("{line}:start"), "timestamp": time, "kind": "tool_start", "name": sanitizer.text(name), "text": text, "toolCallId": data["toolCallId"]});
+            if !withheld && !sensitive_tool_call(data) {
+                if let Some(arguments) = data.get("args").or_else(|| data.get("arguments")) {
+                    event["arguments"] = arguments.clone();
+                }
+                if let Some(intent) = data.get("intent") {
+                    event["intent"] = intent.clone();
+                }
+            }
+            events.push(event);
         }
     }
-    events
+    events.into_iter().filter_map(|event| normalize_event(&event, sanitizer)).collect()
 }
