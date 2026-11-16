@@ -22,6 +22,7 @@
 - Compress the mobile thread header into a compact title/status row and single task-summary row, removing duplicated navigation and secondary timestamps.
 - Replace the mobile Discord action with a Todos control that reveals the complete task list on demand while keeping it out of the default transcript view.
 - Pair mobile browsers from an authorized desktop using a two-minute, single-use QR code and a signed 24-hour HttpOnly control session without transferring the permanent token.
+- Treat successful viewer access as browser-control authorization, removing control-token prompts while retaining private-peer, Host, Origin, same-site, and bridge-ingestion protections.
 
 ## 0.2.0
 
