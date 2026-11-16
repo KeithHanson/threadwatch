@@ -12,6 +12,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use hmac::{Hmac, Mac};
+use qrcode::{QrCode, render::svg};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -166,6 +169,7 @@ pub struct AppState {
     sanitizer: Sanitizer,
     token_digest: [u8; 32],
     control_digest: [u8; 32],
+    pairings: Mutex<HashMap<[u8; 32], i64>>,
 }
 
 impl AppState {
@@ -185,6 +189,7 @@ impl AppState {
             sanitizer,
             token_digest,
             control_digest,
+            pairings: Mutex::new(HashMap::new()),
         })
     }
 
@@ -192,6 +197,12 @@ impl AppState {
         self.store
             .lock()
             .map_err(|_| anyhow!("Storage lock unavailable"))
+    }
+
+    fn pairings(&self) -> Result<MutexGuard<'_, HashMap<[u8; 32], i64>>> {
+        self.pairings
+            .lock()
+            .map_err(|_| anyhow!("Pairing lock unavailable"))
     }
 
     pub fn index(&self) -> Result<Value> {
@@ -546,6 +557,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/threads", get(index))
         .route("/api/threads/{id}", get(detail))
         .route("/api/threads/{id}/commands", post(create_command))
+        .route("/api/pairings", post(create_pairing))
+        .route("/pair/{token}", get(redeem_pairing))
         .route("/api/commands/poll", post(poll_commands))
         .route("/api/commands/{id}/ack", post(ack_command))
         .route("/api/ingest", post(ingest))
@@ -635,26 +648,37 @@ async fn json_body(request: Request) -> ApiResult<Value> {
     Ok(parsed)
 }
 
+fn bearer_digest(headers: &HeaderMap) -> Option<[u8; 32]> {
+    let credential = headers
+        .get(header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")?
+        .trim();
+    (!credential.is_empty() && !credential.bytes().any(|c| c.is_ascii_whitespace()))
+        .then(|| Sha256::digest(credential.as_bytes()).into())
+}
+
+fn digest_matches(actual: &[u8; 32], expected: &[u8; 32]) -> bool {
+    actual
+        .iter()
+        .zip(expected.iter())
+        .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
+}
+
 fn authorize_digest(
     headers: &HeaderMap,
     expected: &[u8; 32],
     configured: bool,
     message: &str,
 ) -> ApiResult<()> {
-    let credential = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .filter(|value| !value.is_empty() && !value.bytes().any(|c| c.is_ascii_whitespace()));
-    let digest = Sha256::digest(credential.unwrap_or("").as_bytes());
-    let difference = digest
-        .iter()
-        .zip(expected.iter())
-        .fold(0u8, |difference, (a, b)| difference | (a ^ b));
-    if !configured || credential.is_none() || difference != 0 {
-        return Err(ApiError(StatusCode::UNAUTHORIZED, message.into()));
+    if configured
+        && bearer_digest(headers).is_some_and(|digest| digest_matches(&digest, expected))
+    {
+        return Ok(());
     }
-    Ok(())
+    Err(ApiError(StatusCode::UNAUTHORIZED, message.into()))
 }
 
 fn authorize(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
@@ -666,14 +690,146 @@ fn authorize(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
     )
 }
 
-fn authorize_control(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
-    authorize_digest(
-        headers,
-        &state.control_digest,
-        !state.config.control_token.is_empty(),
-        "Control authorization required",
-    )
+fn control_session_valid(state: &AppState, headers: &HeaderMap, now: i64) -> bool {
+    let Some(cookie) = headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|cookie| {
+                let (name, value) = cookie.trim().split_once('=')?;
+                (name == "threadwatch_control").then_some(value)
+            })
+        })
+    else {
+        return false;
+    };
+    let Some((payload, signature)) = cookie.rsplit_once('.') else {
+        return false;
+    };
+    let Some((nonce, expiry)) = payload.split_once('.') else {
+        return false;
+    };
+    if nonce.len() < 32
+        || expiry.parse::<i64>().ok().is_none_or(|expiry| expiry <= now)
+        || URL_SAFE_NO_PAD.decode(signature).ok().is_none_or(|signature| {
+            match Hmac::<Sha256>::new_from_slice(&state.control_digest) {
+                Ok(mut mac) => {
+                    mac.update(payload.as_bytes());
+                    mac.verify_slice(&signature).is_err()
+                }
+                Err(_) => true,
+            }
+        })
+    {
+        return false;
+    }
+    true
 }
+
+fn authorize_control(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
+    if !state.config.control_token.is_empty()
+        && (bearer_digest(headers).is_some_and(|digest| digest_matches(&digest, &state.control_digest))
+            || control_session_valid(state, headers, chrono::Utc::now().timestamp()))
+    {
+        return Ok(());
+    }
+    Err(ApiError(
+        StatusCode::UNAUTHORIZED,
+        "Control authorization required".into(),
+    ))
+}
+const PAIRING_TTL_MS: i64 = 2 * 60 * 1000;
+const SESSION_TTL_SECONDS: i64 = 24 * 60 * 60;
+
+async fn create_pairing(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> ApiResult<Json<Value>> {
+    authorize_control(&state, request.headers())?;
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| ApiError::bad("Browser origin required"))?;
+    let mut token = [0u8; 32];
+    getrandom::fill(&mut token).map_err(|_| ApiError::internal(anyhow!("Random source unavailable")))?;
+    let encoded = URL_SAFE_NO_PAD.encode(token);
+    let digest: [u8; 32] = Sha256::digest(encoded.as_bytes()).into();
+    let expires_at = chrono::Utc::now().timestamp_millis() + PAIRING_TTL_MS;
+    let mut pairings = state.pairings().map_err(ApiError::internal)?;
+    pairings.clear();
+    pairings.insert(digest, expires_at);
+    drop(pairings);
+    let url = format!("{origin}/pair/{encoded}");
+    let svg = QrCode::new(url.as_bytes())
+        .map_err(|_| ApiError::internal(anyhow!("Pairing QR generation failed")))?
+        .render::<svg::Color>()
+        .min_dimensions(320, 320)
+        .build();
+    let qr = format!(
+        "data:image/svg+xml;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(svg)
+    );
+    Ok(Json(json!({"url":url, "qr":qr, "expiresAt":expires_at})))
+}
+
+async fn redeem_pairing(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    if token.len() != 43
+        || URL_SAFE_NO_PAD
+            .decode(&token)
+            .ok()
+            .is_none_or(|value| value.len() != 32)
+    {
+        return Err(ApiError(StatusCode::GONE, "Pairing link expired or already used".into()));
+    }
+    let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
+    let now = chrono::Utc::now().timestamp_millis();
+    let valid = state
+        .pairings()
+        .map_err(ApiError::internal)?
+        .remove(&digest)
+        .is_some_and(|expiry| expiry > now);
+    if !valid {
+        return Err(ApiError(StatusCode::GONE, "Pairing link expired or already used".into()));
+    }
+    let mut nonce = [0u8; 24];
+    getrandom::fill(&mut nonce).map_err(|_| ApiError::internal(anyhow!("Random source unavailable")))?;
+    let expiry = chrono::Utc::now().timestamp() + SESSION_TTL_SECONDS;
+    let payload = format!("{}.{}", URL_SAFE_NO_PAD.encode(nonce), expiry);
+    let mut mac = Hmac::<Sha256>::new_from_slice(&state.control_digest)
+        .map_err(|_| ApiError::internal(anyhow!("Session signing failed")))?;
+    mac.update(payload.as_bytes());
+    let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+    let secure = headers
+        .get("x-forwarded-proto")
+        .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"https"))
+        || headers
+            .get(header::HOST)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<axum::http::uri::Authority>().ok())
+            .is_some_and(|authority| {
+                state
+                    .config
+                    .allowed_hosts
+                    .iter()
+                    .any(|host| host == authority.host())
+            });
+    let cookie = format!(
+        "threadwatch_control={payload}.{signature}; Path=/; Max-Age={SESSION_TTL_SECONDS}; HttpOnly; SameSite=Strict{}",
+        if secure { "; Secure" } else { "" }
+    );
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, "/")
+        .header(header::SET_COOKIE, cookie)
+        .body(Body::empty())
+        .map_err(|_| ApiError::internal(anyhow!("Pairing response failed")))
+}
+
 
 async fn create_command(
     State(state): State<Arc<AppState>>,
