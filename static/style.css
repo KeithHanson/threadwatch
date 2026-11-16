@@ -297,23 +297,33 @@ progress::-moz-progress-bar { background: oklch(0.78 0.08 155); border-radius: 2
 .is-mobile .map-topbar, .app-shell[data-mode="map"] #drawer-scrim { display: none; }
 #drawer-scrim { position: absolute; inset: 0; z-index: 25; background: oklch(0.1 0.005 250 / .6); }
 .is-mobile #close-drawer { display: block; height: 44px; padding: 0 14px; background: oklch(0.22 0.006 250); font-size: 13px; }
-.is-mobile .mobile-header { display: flex; align-items: center; gap: 6px; height: 56px; flex-shrink: 0; padding: 0 12px 0 6px; border-bottom: 1px solid var(--border); background: var(--sidebar); }
-.mobile-header #menu { height: 44px; flex-shrink: 0; padding: 0 12px; background: oklch(0.22 0.006 250); font-size: 13px; white-space: nowrap; }
-#mobile-map-link { display: inline-flex; align-items: center; flex-shrink: 0; min-height: 44px; padding: 0 10px; border-radius: 6px; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.is-mobile .mobile-header { display: flex; align-items: center; gap: 4px; height: 48px; flex-shrink: 0; padding: 0 8px 0 4px; border-bottom: 1px solid var(--border); background: var(--sidebar); }
+.mobile-header #menu { height: 44px; flex-shrink: 0; padding: 0 10px; background: oklch(0.22 0.006 250); font-size: 13px; white-space: nowrap; }
+#mobile-map-link { display: inline-flex; align-items: center; flex-shrink: 0; min-height: 44px; padding: 0 8px; border-radius: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; }
 .app-shell[data-mode="map"] #mobile-map-link, .app-shell[data-mode="map"] #menu { display: none; }
-.app-shell[data-mode="map"] #mobile-title { padding-left: 10px; }
-#mobile-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
-#mobile-connection { flex-shrink: 0; padding-left: 4px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.app-shell[data-mode="map"] #mobile-title { padding-left: 8px; }
+#mobile-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+#mobile-connection { flex-shrink: 0; padding-left: 2px; font-size: 11.5px; font-weight: 500; white-space: nowrap; }
 .is-mobile button, .is-mobile input { min-height: 44px; }
 .is-mobile .filter-tabs button { height: 40px; min-height: 40px; }
 .is-mobile .rail-topbar .map-link { min-height: 44px; }
 .is-mobile .thread-item { padding: 11px 10px; }
 .is-mobile #agent-map { padding: 18px 16px 32px; }
 .is-mobile .map-grid { grid-template-columns: minmax(0, 1fr); }
-.is-mobile .thread-header { max-height: 34vh; }
-.is-mobile .discord-link { display: inline-flex; align-items: center; min-height: 44px; }
-.is-mobile .breadcrumbs .map-link { display: inline-flex; align-items: center; min-height: 44px; }
-.is-mobile .todo-hint { flex-basis: 100%; }
+.is-mobile .thread-header { gap: 4px; max-height: 28vh; padding-block: 8px; }
+.is-mobile .breadcrumbs { display: none; }
+.is-mobile .thread-header h1 { font-size: 18px; line-height: 1.2; }
+.is-mobile .thread-metadata { gap: 4px 12px; font-size: 12.5px; }
+.is-mobile .thread-metadata > span { gap: 5px; }
+.is-mobile .thread-metadata .micro-label, .is-mobile .thread-metadata .muted { display: none; }
+.is-mobile .discord-link { display: inline-flex; align-items: center; min-height: 32px; padding: 0 6px; font-size: 0; }
+.is-mobile .discord-link::before { content: "Discord ↗"; font-size: 12px; }
+.is-mobile .todo-panel { padding-block: 7px; }
+.is-mobile .todo-panel .section-heading { flex-wrap: nowrap; gap: 8px; }
+.is-mobile .todo-panel h2 { flex-shrink: 0; font-size: 14px; }
+.is-mobile .todo-panel progress, .is-mobile .todo-hint { display: none; }
+.is-mobile .todo-panel .section-heading > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.is-mobile .toggle-todos { flex-shrink: 0; height: 34px; min-height: 34px; padding-inline: 8px; }
 .is-mobile .transcript-controls { display: none; }
 .is-mobile .event { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .is-mobile .event-tool > .event-content { padding: 12px; }
