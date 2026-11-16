@@ -283,7 +283,11 @@ progress::-moz-progress-bar { background: oklch(0.78 0.08 155); border-radius: 2
 .chat-feedback { flex: 1; color: var(--secondary); font-size: 12px; }
 .chat-form button { min-width: 72px; }
 .is-mobile .chat-panel { padding-bottom: 14px; }
-.is-mobile .chat-form textarea { min-height: 76px; }
+.is-mobile .chat-form { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px 8px; }
+.is-mobile .chat-form textarea { grid-column: 1; grid-row: 1; height: 44px; min-height: 44px; max-height: 44px; padding-block: 10px; resize: none; white-space: nowrap; overflow: hidden; }
+.is-mobile .chat-form > div { display: contents; }
+.is-mobile .chat-feedback { grid-column: 1 / -1; grid-row: 2; }
+.is-mobile .chat-form button { grid-column: 2; grid-row: 1; }
 .poller { display: none; }
 .notice { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 9px var(--px); border-bottom: 1px solid oklch(0.45 0.08 80); background: oklch(0.25 0.035 80); color: oklch(0.9 0.04 80); font-size: 13px; }
 .noscript { position: fixed; bottom: 0; left: 0; right: 0; padding: 12px; background: var(--warn-bg); color: oklch(0.9 0.04 80); }
@@ -310,10 +314,7 @@ progress::-moz-progress-bar { background: oklch(0.78 0.08 155); border-radius: 2
 .is-mobile .discord-link { display: inline-flex; align-items: center; min-height: 44px; }
 .is-mobile .breadcrumbs .map-link { display: inline-flex; align-items: center; min-height: 44px; }
 .is-mobile .todo-hint { flex-basis: 100%; }
-.is-mobile .transcript-controls { flex: 1 1 100%; margin-left: 0; }
-.is-mobile .transcript-controls .search-field { flex: 1 1 100%; }
-.is-mobile .transcript-search { width: 100%; }
-.is-mobile .transcript-controls button { flex: 1 1 0; }
+.is-mobile .transcript-controls { display: none; }
 .is-mobile .event { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .is-mobile .event-tool > .event-content { padding: 12px; }
 .is-mobile .event-tool summary { min-height: 44px; align-items: center; }

@@ -18,6 +18,7 @@
 - Move bridge collection, durable queueing, heartbeats, and Discord metadata lookup into `rust-omp-discord-bridge`.
 - Remove the standalone `collect` command, collector service installer, collector deployment assets, bridge adapter, and collector recovery suite from this server repository.
 - Preserve existing collector state directories and delivery IDs as the integrated bridge reporter's migration contract.
+- Keep mobile thread details readable by hiding transcript search/pause/follow controls and placing a single-line-height chat field beside Send.
 
 ## 0.2.0
 
