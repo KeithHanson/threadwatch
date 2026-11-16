@@ -20,6 +20,7 @@ fn config(path: &std::path::Path) -> Config {
         allowed_hosts: Vec::new(),
         port: 8787,
         ingest_token: "migration-test-shared-secret-long-enough".into(),
+        control_token: "migration-test-control-secret-long-enough".into(),
         data_dir: path.to_owned(),
     }
 }

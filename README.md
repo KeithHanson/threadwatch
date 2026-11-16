@@ -6,13 +6,13 @@ A Rust web dashboard for bot threads, actual todos, and operational transcripts.
 
 ```text
 OMP Discord bridge + integrated durable reporter
-                         ↓ HTTP/shared token
+                  ↕ authenticated HTTP
                Threadwatch server + SQLite
                          ↓
                 HTML + htmx → browser
 ```
 
-This repository provides the central `serve` runtime and its systemd installer. Static assets, including pinned htmx 2.0.8, are embedded; the browser does not fetch CDN resources. Bridge collection and delivery live in `rust-omp-discord-bridge`, keeping one owner for bridge files, lifecycle, credentials, and reporting state.
+This repository provides the central `serve` runtime and its systemd installer. Static assets, including pinned htmx 2.0.8, are embedded; the browser does not fetch CDN resources. Bridge collection, delivery, and command admission live in `rust-omp-discord-bridge`, keeping one owner for bridge files, lifecycle, credentials, reporting state, and OMP sessions.
 
 ## Build
 
@@ -27,7 +27,7 @@ Distribute the resulting `threadwatch` executable to compatible hosts. Neither s
 
 ## Central server
 
-Copy `deploy/server.env.example` to a private environment file owned by the service user. Use absolute paths. Create one mode-600 shared token file with at least 32 random characters and distribute its value privately to trusted bridges.
+Copy `deploy/server.env.example` to a private environment file owned by the service user. Use absolute paths. Create separate mode-600 ingestion and control token files with at least 32 random characters. Distribute the ingestion token privately to trusted bridges; keep the control token with operators.
 
 ```sh
 threadwatch --env-file /absolute/path/server.env serve
@@ -35,7 +35,7 @@ threadwatch --env-file /absolute/path/server.env serve
 
 The server receives activity through reporting bridges; it does not import bridge files directly. `TW_DATA_DIR` holds `threadwatch.sqlite`. Existing stored threads, delivery receipts, and heartbeat records are reused.
 
-Viewer access is explicitly trusted: `TW_LOCAL=1` defaults to `127.0.0.1:8787`. For a private network, also set `TW_LAN=1` and a specific private IPv4 `TW_HOST`. Allow TCP 8787 in the host firewall only from that trusted subnet. Wildcard/public unauthenticated binds and foreign Host/Origin requests are rejected.
+Viewer access is explicitly trusted: `TW_LOCAL=1` defaults to `127.0.0.1:8787`. For a private network, also set `TW_LAN=1` and a specific private IPv4 `TW_HOST`. Allow TCP 8787 in the host firewall only from that trusted subnet. Wildcard/public unauthenticated binds and foreign Host/Origin requests are rejected. Sending chat messages additionally requires `TW_CONTROL_TOKEN`; read access never grants control.
 
 For this deployment, browse **http://192.0.2.10:8787**. Reachable ZeroTier peers can read all connected transcripts without login. HTTP is unencrypted; ZeroTier supplies transport encryption. No public tunnels or router forwarding.
 
@@ -50,6 +50,8 @@ Browser-facing asset, navigation, and htmx URLs are relative, so a reverse proxy
 | `TW_DATA_DIR` | Central server database directory. |
 | `TW_INGEST_TOKEN_FILE` | Private shared ingestion-token file. |
 | `TW_INGEST_TOKEN` | Alternative inline environment token; do not set both token options. |
+| `TW_CONTROL_TOKEN_FILE` | Private operator control-token file used by the chat composer. |
+| `TW_CONTROL_TOKEN` | Alternative inline control token; do not set both control-token options. |
 
 ## Bridge reporters
 
@@ -70,6 +72,8 @@ The dashboard opens on a full-width Agent map, without a global sidebar. Bot car
 Select a bot card to open its most recently updated thread in the current filter. If that bot has no matching threads, the filter switches and its most recent thread opens instead. Selecting a thread directly opens that thread. Thread mode shows only that bot's identity, collector health, and filtered threads in the left rail. Return through Agent map to switch bots. Collectors without threads remain visible as noninteractive map cards. The old global title/bot search and Reporting sources panel have been removed; transcript search remains available.
 
 Select a thread for its recorded task list and chronological transcript. Tasks collapse on small/short screens; messages, tool starts/calls/results, and operational notices have separate presentations. Tool errors expand by default. Search covers loaded records only; load older pages to search farther back. Pause freezes the selected detail, not collection, and shows the number of newly recorded events waiting. Scrolling away from the bottom holds your position while new activity arrives; Follow latest returns to the bottom without resuming a paused view. History replacement clears the old generation and displays a notice rather than mixing records.
+
+The Chat panel sends an operator message through Threadwatch to the reporting bridge that owns the selected thread. The browser keeps the control token in session storage only. Commands remain pending until that bridge accepts or rejects them; accepted means durably admitted to the bridge turn queue, not completed by the model. Offline/unknown sources disable the composer. The bridge remains authoritative for session state, interruption, queue limits, and Discord delivery.
 
 Tool cards lead with the recorded intent and show commands, code, paths, queries, proposed patches, or task details without requiring JSON inspection. Device/API writes are distinguished from file writes. Full sanitized records remain expandable; malformed, unknown, and withheld inputs retain honest fallbacks. Result receipts do not imply success, and recognized shell background-launch receipts do not imply job completion.
 

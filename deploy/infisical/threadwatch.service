@@ -14,7 +14,7 @@ LoadCredential=client-secret:/etc/threadwatch/credentials/client-secret
 Environment=INFISICAL_DISABLE_UPDATE_CHECK=true
 Environment=DO_NOT_TRACK=1
 ExecStartPre=/usr/local/bin/infisical agent --config=/etc/threadwatch/server-agent.yaml
-ExecStartPre=/usr/bin/chmod 0600 /run/threadwatch/server.env /run/threadwatch/ingest-token
+ExecStartPre=/usr/bin/chmod 0600 /run/threadwatch/server.env /run/threadwatch/ingest-token /run/threadwatch/control-token
 ExecStart=/usr/local/bin/threadwatch --env-file /run/threadwatch/server.env serve
 Restart=on-failure
 RestartSec=5
