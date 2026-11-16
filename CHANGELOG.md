@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - Render intent-first tool cards with readable commands, code, paths, proposed patches, API/device operations, safe raw disclosures, and explicit error/background-receipt states.
 - Preserve sanitized structured arguments and native session/call IDs through collection and ingestion; group only exactly correlated lifecycle records, including across loaded pages, without guessing legacy history.
