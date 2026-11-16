@@ -27,7 +27,7 @@ Distribute the resulting `threadwatch` executable to compatible hosts. Neither s
 
 ## Central server
 
-Copy `deploy/server.env.example` to a private environment file owned by the service user. Use absolute paths. Create separate mode-600 ingestion and control token files with at least 32 random characters. Distribute the ingestion token privately to trusted bridges; keep the control token with operators.
+Copy `deploy/server.env.example` to a private environment file owned by the service user. Use absolute paths. Create separate mode-600 ingestion and browser-session signing secret files with at least 32 random characters. Distribute the ingestion token privately to trusted bridges; keep the signing secret only on the server.
 
 ```sh
 threadwatch --env-file /absolute/path/server.env serve
@@ -35,7 +35,7 @@ threadwatch --env-file /absolute/path/server.env serve
 
 The server receives activity through reporting bridges; it does not import bridge files directly. `TW_DATA_DIR` holds `threadwatch.sqlite`. Existing stored threads, delivery receipts, and heartbeat records are reused.
 
-Viewer access is explicitly trusted: `TW_LOCAL=1` defaults to `127.0.0.1:8787`. For a private network, also set `TW_LAN=1` and a specific private IPv4 `TW_HOST`. Allow TCP 8787 in the host firewall only from that trusted subnet. Wildcard/public unauthenticated binds and foreign Host/Origin requests are rejected. Sending chat messages additionally requires `TW_CONTROL_TOKEN`; read access never grants control.
+Viewer access is explicitly trusted and grants browser control: a browser that passes the private-peer, Host, Origin, and same-site request guards may send chat commands and generate pairing QR codes without entering a control token. `TW_LOCAL=1` defaults to `127.0.0.1:8787`. For a private network, also set `TW_LAN=1` and a specific private IPv4 `TW_HOST`. Allow TCP 8787 in the host firewall only from that trusted subnet. Wildcard/public unauthenticated binds and foreign Host/Origin requests are rejected.
 
 For this deployment, browse **http://192.168.192.183:8787**. Reachable ZeroTier peers can read all connected transcripts without login. HTTP is unencrypted; ZeroTier supplies transport encryption. No public tunnels or router forwarding.
 
@@ -50,8 +50,8 @@ Browser-facing asset, navigation, and htmx URLs are relative, so a reverse proxy
 | `TW_DATA_DIR` | Central server database directory. |
 | `TW_INGEST_TOKEN_FILE` | Private shared ingestion-token file. |
 | `TW_INGEST_TOKEN` | Alternative inline environment token; do not set both token options. |
-| `TW_CONTROL_TOKEN_FILE` | Private operator control-token file used by the chat composer. |
-| `TW_CONTROL_TOKEN` | Alternative inline control token; do not set both control-token options. |
+| `TW_CONTROL_TOKEN_FILE` | Private server-side secret used to sign paired-browser sessions; users never enter it. |
+| `TW_CONTROL_TOKEN` | Alternative inline session-signing secret; do not set both control-token options. |
 
 ## Bridge reporters
 
@@ -73,7 +73,7 @@ Select a bot card to open its most recently updated thread in the current filter
 
 Select a thread for its recorded task list and chronological transcript. Tasks collapse on small/short screens; messages, tool starts/calls/results, and operational notices have separate presentations. Tool errors expand by default. Search covers loaded records only; load older pages to search farther back. Pause freezes the selected detail, not collection, and shows the number of newly recorded events waiting. Scrolling away from the bottom holds your position while new activity arrives; Follow latest returns to the bottom without resuming a paused view. History replacement clears the old generation and displays a notice rather than mixing records.
 
-The Chat panel sends an operator message through Threadwatch to the reporting bridge that owns the selected thread. A control token entered directly remains in session storage only. A logged-in desktop browser can instead select **Pair mobile**, display a two-minute single-use QR code, and authorize the scanned browser with a signed HttpOnly session cookie lasting 24 hours; the permanent token is never encoded in the QR or stored by the paired browser. Generating a newer QR invalidates any unredeemed older code. Commands remain pending until that bridge accepts or rejects them; accepted means durably admitted to the bridge turn queue, not completed by the model. Offline/unknown sources disable the composer. The bridge remains authoritative for session state, interruption, queue limits, and Discord delivery.
+The Chat panel sends an operator message through Threadwatch to the reporting bridge that owns the selected thread. Any browser trusted to view Threadwatch may send commands without entering or storing a control token. A desktop browser can select **Pair mobile**, display a two-minute single-use QR code, and issue the scanned browser a signed HttpOnly session cookie lasting 24 hours. Generating a newer QR invalidates any unredeemed older code. Commands remain pending until that bridge accepts or rejects them; accepted means durably admitted to the bridge turn queue, not completed by the model. Offline/unknown sources disable the composer. The bridge remains authoritative for session state, interruption, queue limits, and Discord delivery.
 
 Tool cards lead with the recorded intent and show commands, code, paths, queries, proposed patches, or task details without requiring JSON inspection. Device/API writes are distinguished from file writes. Full sanitized records remain expandable; malformed, unknown, and withheld inputs retain honest fallbacks. Result receipts do not imply success, and recognized shell background-launch receipts do not imply job completion.
 
