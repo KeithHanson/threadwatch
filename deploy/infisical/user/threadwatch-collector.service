@@ -1,0 +1,25 @@
+[Unit]
+Description=Threadwatch collector with Infisical startup credentials
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.config/threadwatch
+RuntimeDirectory=threadwatch-collector
+RuntimeDirectoryMode=0700
+LoadCredential=client-id:%h/.config/threadwatch/credentials/collector-client-id
+LoadCredential=client-secret:%h/.config/threadwatch/credentials/collector-client-secret
+Environment=INFISICAL_DISABLE_UPDATE_CHECK=true
+Environment=DO_NOT_TRACK=1
+ExecStartPre=%h/.local/bin/infisical agent --config=%h/.config/threadwatch/collector-agent.yaml
+ExecStartPre=/usr/bin/chmod 0600 %t/threadwatch-collector/collector.env %t/threadwatch-collector/ingest-token
+# Preserve this host's actual installed binary path; do not rebuild for credentials.
+ExecStart=/usr/local/bin/threadwatch --env-file %t/threadwatch-collector/collector.env collect
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=90
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,24 @@
+# Example for keith UID 1000. Adapt UID/home and preserve actual bridge/state paths.
+infisical:
+  address: http://192.0.2.10:8086
+  exit-after-auth: true
+  revoke-credentials-on-shutdown: true
+auth:
+  type: universal-auth
+  config:
+    client-id: /run/user/1000/credentials/threadwatch-collector.service/client-id
+    client-secret: /run/user/1000/credentials/threadwatch-collector.service/client-secret
+templates:
+  - destination-path: /run/user/1000/threadwatch-collector/collector.env
+    template-content: |
+      {{- range listSecrets "<PROJECT_ID>" "dev" "/collector" }}
+      {{- if and (ne .Key "TW_SERVER_URL") (ne .Key "TW_INGEST_TOKEN_FILE") (ne .Key "TW_INGEST_TOKEN") (ne .Key "TW_BRIDGES_FILE") (ne .Key "TW_COLLECTOR_DATA_DIR") }}
+      {{ .Key }}="{{ .Value | replace "\\" "\\\\" | replace "\"" "\\\"" | replace "$" "\\$" | replace "\n" "\\n" }}"
+      {{- end }}
+      {{- end }}
+      TW_SERVER_URL="http://192.0.2.10:8787"
+      TW_INGEST_TOKEN_FILE="/run/user/1000/threadwatch-collector/ingest-token"
+      TW_BRIDGES_FILE="/home/keith/.config/threadwatch/bridge.json"
+      TW_COLLECTOR_DATA_DIR="/home/keith/.local/state/threadwatch-collector"
+  - destination-path: /run/user/1000/threadwatch-collector/ingest-token
+    template-content: '{{ with getSecretByName "<PROJECT_ID>" "dev" "/file-credentials" "TW_INGEST_TOKEN" }}{{ .Value }}{{ end }}'

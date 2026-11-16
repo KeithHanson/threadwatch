@@ -93,6 +93,57 @@ Inspect `systemctl status threadwatch.service` or `systemctl status threadwatch-
 
 For upgrades from Node, stop the old collector/server before starting Rust on the same databases. Back up SQLite with its backup API, not a raw copy of a live WAL database. Reuse the existing state and token files; remove the obsolete server-side `TW_BRIDGES_FILE` setting. The Discord bridge itself does not need restarting.
 
+### Fleet collectors: Infisical on system or user managers
+
+Keep the installed Threadwatch binary. This credential migration needs deployment
+assets and per-host enrollment, not a source build.
+
+For **user services**, use `deploy/infisical/user/threadwatch-collector.service`
+and `deploy/infisical/user/collector-agent.yaml`. The YAML example assumes
+`keith`, UID 1000: adapt every home/runtime path to the actual account. Preserve
+the existing `TW_BRIDGES_FILE`, `TW_COLLECTOR_DATA_DIR`, source ID, checkpoints and
+queue rather than adopting an example path. Keep the server at
+`http://192.0.2.10:8787`.
+
+- Install the YAML at `~/.config/threadwatch/collector-agent.yaml` and the unit
+  at `~/.config/systemd/user/threadwatch-collector.service`.
+- Put the dedicated **collector** identity's `collector-client-id` and
+  `collector-client-secret` in `~/.config/threadwatch/credentials/`, files 0600,
+  directory 0700. Do not substitute bridge, administrator or another bot's
+  bootstrap. Files remain readable by the owning Unix user.
+- Select the actual installed CLI and Threadwatch executable paths in the unit.
+  The example uses `~/.local/bin/infisical` and `/usr/local/bin/threadwatch`.
+- Use `systemd-analyze --user verify` and `systemctl --user`; preserve existing
+  enabled/linger settings. User services must not contain `User=threadwatch`,
+  system Docker dependencies or privileged command prefixes.
+
+For **system collectors** outside services, adapt the existing system example's
+User, working directory, CLI, bootstrap sources and host-specific YAML paths.
+Use the dedicated collector identity rather than the historical services-host
+`server-client-*` files. The direct Infisical endpoint is
+`http://192.0.2.10:8086`, not that remote host's loopback address.
+
+Both variants fetch Threadwatch project `<PROJECT_ID>`,
+`dev`, settings `/collector` and `/file-credentials/TW_INGEST_TOKEN`. Existing
+ingestion credentials are unchanged. If optional Discord lookup is configured,
+its `botTokenFile` must use that bot's own Infisical-rendered token, never another
+bot's token. Do not remove a shared token file until every local consumer has
+migrated; collector ingestion itself does not require Discord lookup.
+
+Back up selected units/configuration privately. First prove Agent rendering in a
+separately named unit/runtime directory without launching another collector
+against live state. Then stop only the affected collector, install/reload/start,
+and verify actual Agent startup, 0700 runtime/0600 files, canonical token match,
+fresh ready heartbeat and queue drainage. Restore previous configuration, not
+stale queue/database data, if rollback is needed. Never use the generic
+`install-service` command afterward to overwrite credential-aware units.
+
+User-manager proof on 2026-11-16: a real Agent fetch and the actual Rust `dotenvy`
+parser consumed the rendered configuration; token bytes, host overrides and
+0700/0600 permissions matched. A missing-secret start failed. Runtime files were
+removed after both oneshot proof runs; isolated units and bootstrap copies were
+cleaned. No production collector or bridge was restarted by this proof.
+
 ### Services host: Infisical-managed startup
 
 [`deploy/infisical/`](deploy/infisical/) is the authoritative, versioned deployment for the **services host**, superseding the untracked `/home/services/threadwatch-migration` assets and historical host-specific copies. It contains complete `threadwatch.service` and `threadwatch-collector.service` units, plus `server-agent.yaml` and `collector-agent.yaml`. These are not Hephaestus units: the server is **http://192.0.2.10:8787**, and Infisical is local to services at **http://127.0.0.1:8086**. Services-bot owns installation, configuration, restarts, and runtime verification; repository changes alone do not deploy anything.
