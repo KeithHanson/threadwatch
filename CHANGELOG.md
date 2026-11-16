@@ -6,9 +6,9 @@
 - Sort agents alphabetically and their threads by last update, most recent first; unknown update times sort last.
 - Use relative browser URLs so the dashboard works beneath a stripped reverse-proxy path prefix.
 - Allow explicitly configured reverse-proxy hostnames while retaining private-peer checks.
-- Version the services-host Infisical Agent configurations and complete systemd units, with private runtime files and systemd bootstrap credentials for both server and collector.
-- Always render host-specific path/endpoint overrides, exclude conflicting inline ingestion tokens, and escape other settings for Rust dotenvy rather than Go string literals.
-- Document services-bot activation, independent Infisical recovery, and configuration-only rollback without replacing live databases, collector queues, or delivery IDs.
+- Move bridge collection, durable queueing, heartbeats, and Discord metadata lookup into `rust-omp-discord-bridge`.
+- Remove the standalone `collect` command, collector service installer, collector deployment assets, bridge adapter, and collector recovery suite from this server repository.
+- Preserve existing collector state directories and delivery IDs as the integrated bridge reporter's migration contract.
 
 ## 0.2.0
 

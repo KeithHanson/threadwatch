@@ -1,8 +1,0 @@
-[
-  {
-    "id": "hephaestus",
-    "name": "Hephaestus",
-    "databasePath": "~/.local/state/omp-discord-bridge/bridge.sqlite",
-    "sessionDir": "~/.local/state/omp-discord-bridge/omp-sessions"
-  }
-]

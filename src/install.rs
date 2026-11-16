@@ -1,4 +1,3 @@
-use crate::Role;
 use anyhow::{Context, Result, bail, ensure};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -38,7 +37,7 @@ fn quote(value: &str) -> String {
     )
 }
 
-pub fn install(role: Role, environment: &Path, user: &str) -> Result<()> {
+pub fn install(environment: &Path, user: &str) -> Result<()> {
     ensure!(uid(None)? == 0, "Installing system services requires sudo");
     ensure!(
         !user.is_empty()
@@ -76,10 +75,7 @@ pub fn install(role: Role, environment: &Path, user: &str) -> Result<()> {
         .context("Environment file has no parent")?
         .to_str()
         .context("Invalid environment directory")?;
-    let (name, action, description) = match role {
-        Role::Server => ("threadwatch.service", "serve", "server"),
-        Role::Collector => ("threadwatch-collector.service", "collect", "collector"),
-    };
+    let (name, action, description) = ("threadwatch.service", "serve", "server");
     let target = Path::new("/etc/systemd/system").join(name);
     if target.exists() && !fs::read_to_string(&target)?.starts_with(MARKER) {
         bail!("Refusing to replace a service not managed by Threadwatch");
