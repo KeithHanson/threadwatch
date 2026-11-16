@@ -36,6 +36,7 @@ pub struct Config {
     pub allowed_hosts: Vec<String>,
     pub port: u16,
     pub ingest_token: String,
+    pub control_token: String,
     pub data_dir: PathBuf,
 }
 
@@ -80,43 +81,8 @@ impl Config {
         }) {
             bail!("TW_ALLOWED_HOSTS must contain comma-separated hostnames");
         }
-        let token = env("TW_INGEST_TOKEN");
-        let token_file = env("TW_INGEST_TOKEN_FILE");
-        if token.is_some() && token_file.is_some() {
-            bail!("TW_INGEST_TOKEN and TW_INGEST_TOKEN_FILE are mutually exclusive");
-        }
-        let configured = token.is_some() || token_file.is_some();
-        let ingest_token = if let Some(path) = token_file {
-            let read_token = || -> Result<String> {
-                let mut file = File::open(expand_path(&path, &env)?)?;
-                let info = file.metadata()?;
-                if !info.is_file() {
-                    bail!("Not a regular file");
-                }
-                #[cfg(unix)]
-                if info.permissions().mode() & 0o077 != 0 {
-                    bail!("Not private");
-                }
-                if info.len() > MAX_BODY as u64 {
-                    bail!("Token file too large");
-                }
-                let mut content = String::new();
-                file.read_to_string(&mut content)?;
-                Ok(content.trim().to_owned())
-            };
-            read_token().map_err(|_| anyhow!("TW_INGEST_TOKEN_FILE must be a readable private regular file with no group or other permissions"))?
-        } else {
-            token.unwrap_or_default()
-        };
-        if configured && ingest_token.chars().count() < 32 {
-            bail!("TW_INGEST_TOKEN must be at least 32 characters");
-        }
-        if ingest_token
-            .bytes()
-            .any(|c| c.is_ascii_whitespace() || c.is_ascii_control())
-        {
-            bail!("TW_INGEST_TOKEN must not contain whitespace or control characters");
-        }
+        let ingest_token = read_token(&env, "TW_INGEST_TOKEN")?;
+        let control_token = read_token(&env, "TW_CONTROL_TOKEN")?;
         let directory = env("TW_DATA_DIR").unwrap_or_else(|| "~/.local/state/threadwatch".into());
         Ok(Self {
             local,
@@ -125,9 +91,54 @@ impl Config {
             allowed_hosts,
             port,
             ingest_token,
+            control_token,
             data_dir: expand_path(&directory, &env)?,
         })
     }
+}
+
+fn read_token(env: &impl Fn(&str) -> Option<String>, name: &str) -> Result<String> {
+    let token = env(name);
+    let file_name = format!("{name}_FILE");
+    let token_file = env(&file_name);
+    if token.is_some() && token_file.is_some() {
+        bail!("{name} and {file_name} are mutually exclusive");
+    }
+    let configured = token.is_some() || token_file.is_some();
+    let value = if let Some(path) = token_file {
+        let read = || -> Result<String> {
+            let mut file = File::open(expand_path(&path, env)?)?;
+            let info = file.metadata()?;
+            if !info.is_file() {
+                bail!("Not a regular file");
+            }
+            #[cfg(unix)]
+            if info.permissions().mode() & 0o077 != 0 {
+                bail!("Not private");
+            }
+            if info.len() > MAX_BODY as u64 {
+                bail!("Token file too large");
+            }
+            let mut content = String::new();
+            file.read_to_string(&mut content)?;
+            Ok(content.trim().to_owned())
+        };
+        read().map_err(|_| {
+            anyhow!("{file_name} must be a readable private regular file with no group or other permissions")
+        })?
+    } else {
+        token.unwrap_or_default()
+    };
+    if configured && value.chars().count() < 32 {
+        bail!("{name} must be at least 32 characters");
+    }
+    if value
+        .bytes()
+        .any(|c| c.is_ascii_whitespace() || c.is_ascii_control())
+    {
+        bail!("{name} must not contain whitespace or control characters");
+    }
+    Ok(value)
 }
 
 fn expand_path(path: &str, env: &impl Fn(&str) -> Option<String>) -> Result<PathBuf> {
@@ -154,6 +165,7 @@ pub struct AppState {
     store: Mutex<Store>,
     sanitizer: Sanitizer,
     token_digest: [u8; 32],
+    control_digest: [u8; 32],
 }
 
 impl AppState {
@@ -163,13 +175,16 @@ impl AppState {
         }
         validate_bind(config.lan, &config.host)?;
         let store = Store::open(&config.data_dir)?;
-        let sanitizer = Sanitizer::new(vec![config.ingest_token.clone()]);
+        let sanitizer =
+            Sanitizer::new(vec![config.ingest_token.clone(), config.control_token.clone()]);
         let token_digest = Sha256::digest(config.ingest_token.as_bytes()).into();
+        let control_digest = Sha256::digest(config.control_token.as_bytes()).into();
         Ok(Self {
             config,
             store: Mutex::new(store),
             sanitizer,
             token_digest,
+            control_digest,
         })
     }
 
@@ -249,6 +264,7 @@ impl AppState {
             detail["revision"].as_str().unwrap_or("0"),
             source.unwrap_or(&Value::Null),
         )?);
+        detail["controlEnabled"] = Value::Bool(!self.config.control_token.is_empty());
         Ok(Some(detail))
     }
 }
@@ -529,6 +545,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/threads", get(index))
         .route("/api/threads/{id}", get(detail))
+        .route("/api/threads/{id}/commands", post(create_command))
+        .route("/api/commands/poll", post(poll_commands))
+        .route("/api/commands/{id}/ack", post(ack_command))
         .route("/api/ingest", post(ingest))
         .route("/api/heartbeat", post(heartbeat))
         .merge(crate::ui::router())
@@ -616,7 +635,12 @@ async fn json_body(request: Request) -> ApiResult<Value> {
     Ok(parsed)
 }
 
-fn authorize(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
+fn authorize_digest(
+    headers: &HeaderMap,
+    expected: &[u8; 32],
+    configured: bool,
+    message: &str,
+) -> ApiResult<()> {
     let credential = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -625,15 +649,101 @@ fn authorize(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
     let digest = Sha256::digest(credential.unwrap_or("").as_bytes());
     let difference = digest
         .iter()
-        .zip(state.token_digest.iter())
+        .zip(expected.iter())
         .fold(0u8, |difference, (a, b)| difference | (a ^ b));
-    if state.config.ingest_token.is_empty() || credential.is_none() || difference != 0 {
-        return Err(ApiError(
-            StatusCode::UNAUTHORIZED,
-            "Ingest authorization required".into(),
-        ));
+    if !configured || credential.is_none() || difference != 0 {
+        return Err(ApiError(StatusCode::UNAUTHORIZED, message.into()));
     }
     Ok(())
+}
+
+fn authorize(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
+    authorize_digest(
+        headers,
+        &state.token_digest,
+        !state.config.ingest_token.is_empty(),
+        "Ingest authorization required",
+    )
+}
+
+fn authorize_control(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
+    authorize_digest(
+        headers,
+        &state.control_digest,
+        !state.config.control_token.is_empty(),
+        "Control authorization required",
+    )
+}
+
+async fn create_command(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    request: Request,
+) -> ApiResult<Json<Value>> {
+    authorize_control(&state, request.headers())?;
+    let value = json_body(request).await?;
+    let text = value["text"]
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty() && text.chars().count() <= 20_000)
+        .ok_or_else(|| ApiError::bad("text must contain between 1 and 20000 characters"))?;
+    let text = state.sanitizer.text(text);
+    let mut store = state.store().map_err(ApiError::internal)?;
+    let command = store
+        .create_command(&id, &text, chrono::Utc::now().timestamp_millis())
+        .map_err(|error| match error.to_string().as_str() {
+            "Thread not found" => ApiError(StatusCode::NOT_FOUND, "Thread not found".into()),
+            "Source offline" => ApiError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Bridge is offline; command was not queued".into(),
+            ),
+            _ => ApiError::internal(error),
+        })?;
+    Ok(Json(command))
+}
+
+async fn poll_commands(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> ApiResult<Json<Value>> {
+    authorize(&state, request.headers())?;
+    let value = json_body(request).await?;
+    let bot_id = identifier(&value["botId"], "botId", 200, &state.sanitizer)?;
+    let commands = state
+        .store()
+        .map_err(ApiError::internal)?
+        .pending_commands(bot_id, 20)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({"commands":commands})))
+}
+
+async fn ack_command(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    request: Request,
+) -> ApiResult<Json<Value>> {
+    authorize(&state, request.headers())?;
+    let value = json_body(request).await?;
+    let bot_id = identifier(&value["botId"], "botId", 200, &state.sanitizer)?;
+    let accepted = value["accepted"]
+        .as_bool()
+        .ok_or_else(|| ApiError::bad("accepted must be a boolean"))?;
+    let error = value["error"]
+        .as_str()
+        .map(|error| state.sanitizer.text(error))
+        .filter(|error| !error.is_empty());
+    if !accepted && error.is_none() {
+        return Err(ApiError::bad("rejected commands require an error"));
+    }
+    let changed = state
+        .store()
+        .map_err(ApiError::internal)?
+        .finish_command(bot_id, &id, accepted, error.as_deref())
+        .map_err(ApiError::internal)?;
+    if !changed {
+        return Err(ApiError(StatusCode::NOT_FOUND, "Command not found".into()));
+    }
+    Ok(Json(json!({"accepted":accepted})))
 }
 async fn ingest(State(state): State<Arc<AppState>>, request: Request) -> ApiResult<Json<Value>> {
     authorize(&state, request.headers())?;
