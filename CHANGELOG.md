@@ -19,6 +19,7 @@
 - Remove the standalone `collect` command, collector service installer, collector deployment assets, bridge adapter, and collector recovery suite from this server repository.
 - Preserve existing collector state directories and delivery IDs as the integrated bridge reporter's migration contract.
 - Keep mobile thread details readable by hiding transcript search/pause/follow controls and placing a single-line-height chat field beside Send.
+- Compress the mobile thread header into a compact title/status row and single task-summary row, removing duplicated navigation and secondary timestamps.
 
 ## 0.2.0
 
