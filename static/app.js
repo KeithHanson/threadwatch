@@ -449,6 +449,58 @@
     announce(state.paused ? 'Jumped to latest. Transcript is still paused.' : 'Following latest.');
   }
 
+  document.addEventListener('submit', async event => {
+    const form = event.target.closest('.chat-form');
+    if (!form) return;
+    event.preventDefault();
+    const input = $('textarea', form);
+    const button = $('button[type="submit"]', form);
+    const feedback = $('.chat-feedback', form);
+    const text = input.value.trim();
+    if (!text) {
+      feedback.textContent = 'Enter a message.';
+      return;
+    }
+    let token = sessionStorage.getItem('threadwatch-control-token');
+    if (!token) {
+      token = window.prompt('Threadwatch control token');
+      if (!token) {
+        feedback.textContent = 'Control authorization is required.';
+        return;
+      }
+    }
+    input.disabled = true;
+    button.disabled = true;
+    feedback.textContent = 'Sending…';
+    try {
+      const response = await fetch(form.dataset.commandUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
+      });
+      if (!response.ok) {
+        if (response.status === 401) sessionStorage.removeItem('threadwatch-control-token');
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || (response.status === 401
+          ? 'Control token rejected. Submit again to enter it.'
+          : 'Message was not queued.'));
+      }
+      sessionStorage.setItem('threadwatch-control-token', token);
+      input.value = '';
+      feedback.textContent = 'Queued for bridge delivery.';
+      htmx.trigger($('.poller', form.closest('.thread-panel')), 'refresh');
+    } catch (error) {
+      feedback.textContent = error.message || 'Message was not queued.';
+    } finally {
+      input.disabled = false;
+      button.disabled = false;
+      input.focus();
+    }
+  });
+
   document.addEventListener('click', event => {
     const link = event.target.closest('.thread-link');
     const map = event.target.closest('.map-link');

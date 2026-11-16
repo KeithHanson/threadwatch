@@ -90,6 +90,8 @@ impl Store {
             CREATE TABLE IF NOT EXISTS imports (thread_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS deliveries (bot_id TEXT NOT NULL, delivery_id TEXT NOT NULL, thread_id TEXT NOT NULL, PRIMARY KEY(bot_id,delivery_id));
             CREATE TABLE IF NOT EXISTS heartbeats (bot_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, bot_id TEXT NOT NULL, target_thread_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','accepted','rejected')), error TEXT);
+            CREATE INDEX IF NOT EXISTS commands_bot_pending_idx ON commands(bot_id,status,created_at,id);
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
             INSERT OR IGNORE INTO meta VALUES ('revision',0);")?;
         Ok(Self { db })
@@ -227,6 +229,84 @@ impl Store {
         Ok(id)
     }
 
+    pub fn create_command(&mut self, thread_id: &str, text: &str, created_at: i64) -> Result<Value> {
+        let (bot_id, target_thread_id, heartbeat): (String, String, Option<String>) = self
+            .db
+            .query_row(
+                "SELECT json_extract(t.payload,'$.botId'), json_extract(t.payload,'$.channelId'),
+                    (SELECT payload FROM heartbeats WHERE bot_id=json_extract(t.payload,'$.botId'))
+                 FROM threads t WHERE t.id=? AND t.source LIKE 'ingest:%'",
+                [thread_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?
+            .context("Thread not found")?;
+        let online = heartbeat
+            .as_deref()
+            .and_then(|payload| serde_json::from_str::<Value>(payload).ok())
+            .and_then(|heartbeat| heartbeat["lastSeenAt"].as_i64())
+            .is_some_and(|seen| created_at.saturating_sub(seen) < 45_000);
+        if !online {
+            bail!("Source offline");
+        }
+        let id: String = self.db.query_row(
+            "INSERT INTO commands(id,thread_id,bot_id,target_thread_id,text,created_at,status) VALUES(lower(hex(randomblob(16))),?,?,?,?,?,'pending') RETURNING id",
+            params![thread_id, bot_id, target_thread_id, text, created_at],
+            |row| row.get(0),
+        )?;
+        Ok(json!({"id":id,"threadId":thread_id,"botId":bot_id,"targetThreadId":target_thread_id,"text":text,"createdAt":created_at,"status":"pending"}))
+    }
+
+    pub fn pending_commands(&self, bot_id: &str, limit: usize) -> Result<Vec<Value>> {
+        if !(1..=100).contains(&limit) {
+            bail!("limit must be between 1 and 100");
+        }
+        let mut statement = self.db.prepare_cached(
+            "SELECT id,thread_id,target_thread_id,text,created_at FROM commands WHERE bot_id=? AND status='pending' ORDER BY created_at,id LIMIT ?",
+        )?;
+        let rows = statement.query_map(params![bot_id, limit as i64], |row| {
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "threadId": row.get::<_, String>(1)?,
+                "targetThreadId": row.get::<_, String>(2)?,
+                "text": row.get::<_, String>(3)?,
+                "createdAt": row.get::<_, i64>(4)?,
+            }))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn finish_command(
+        &mut self,
+        bot_id: &str,
+        command_id: &str,
+        accepted: bool,
+        error: Option<&str>,
+    ) -> Result<bool> {
+        let status = if accepted { "accepted" } else { "rejected" };
+        let changed = self.db.execute(
+            "UPDATE commands SET status=?,error=? WHERE id=? AND bot_id=? AND status='pending'",
+            params![status, error, command_id, bot_id],
+        )?;
+        Ok(changed == 1)
+    }
+
+    pub fn commands_for_thread(&self, thread_id: &str) -> Result<Vec<Value>> {
+        let mut statement = self.db.prepare_cached(
+            "SELECT id,text,created_at,status,error FROM commands WHERE thread_id=? ORDER BY created_at,id",
+        )?;
+        let rows = statement.query_map([thread_id], |row| {
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "text": row.get::<_, String>(1)?,
+                "createdAt": row.get::<_, i64>(2)?,
+                "status": row.get::<_, String>(3)?,
+                "error": row.get::<_, Option<String>>(4)?,
+            }))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn record_heartbeat(&mut self, heartbeat: &Value, received_at: i64) -> Result<()> {
         let bot = heartbeat["botId"].as_str().context("Missing bot id")?;
         let mut payload = json!({"id": format!("ingest:{bot}"), "name": heartbeat["botName"], "status": heartbeat["status"], "lastSeenAt": received_at, "pendingBatches": heartbeat["pendingBatches"]});
@@ -342,8 +422,9 @@ impl Store {
         } else {
             None
         };
+        let commands = self.commands_for_thread(id)?;
         Ok(Some(
-            json!({"thread": serde_json::from_str::<Value>(&payload)?, "todos": serde_json::from_str::<Value>(&todos)?, "events": events.into_iter().map(|(_, value)| value).collect::<Vec<_>>(), "nextCursor": next, "revision": revision.to_string(), "eventCount": event_count}),
+            json!({"thread": serde_json::from_str::<Value>(&payload)?, "todos": serde_json::from_str::<Value>(&todos)?, "events": events.into_iter().map(|(_, value)| value).collect::<Vec<_>>(), "commands": commands, "nextCursor": next, "revision": revision.to_string(), "eventCount": event_count}),
         ))
     }
 }

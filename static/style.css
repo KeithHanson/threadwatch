@@ -268,6 +268,22 @@ progress::-moz-progress-bar { background: oklch(0.78 0.08 155); border-radius: 2
 .event-error:not(.event-tool) .message-text { color: oklch(0.88 0.05 25); }
 .empty-events { margin: 12px var(--px); max-width: 820px; }
 .new-records { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); height: 32px; min-height: 32px; max-width: calc(100% - 32px); border: 1px solid oklch(0.5 0.08 250); border-radius: 16px; background: oklch(0.25 0.03 250); box-shadow: 0 4px 14px oklch(0 0 0 / .35); white-space: nowrap; }
+.chat-panel { flex-shrink: 0; padding: 10px var(--px) 12px; border-top: 1px solid var(--border); background: oklch(0.18 0.005 250); }
+.chat-hint { color: var(--muted) !important; }
+.chat-commands { display: flex; flex-direction: column; gap: 6px; max-height: 160px; margin-top: 8px; overflow: auto; }
+.chat-command { max-width: 76ch; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: oklch(0.21 0.008 250); }
+.chat-command-meta { display: flex; gap: 10px; margin-top: 4px; color: var(--muted); font: 11px var(--mono); }
+.chat-pending { border-color: oklch(0.45 0.08 80); }
+.chat-accepted { border-color: oklch(0.38 0.06 155); }
+.chat-rejected { border-color: oklch(0.5 0.1 25); }
+.chat-error { margin-top: 5px; color: oklch(0.86 0.09 25); font-size: 12px; }
+.chat-form { display: grid; gap: 7px; margin-top: 9px; }
+.chat-form textarea { width: 100%; min-height: 64px; resize: vertical; }
+.chat-form > div { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.chat-feedback { flex: 1; color: var(--secondary); font-size: 12px; }
+.chat-form button { min-width: 72px; }
+.is-mobile .chat-panel { padding-bottom: 14px; }
+.is-mobile .chat-form textarea { min-height: 76px; }
 .poller { display: none; }
 .notice { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 9px var(--px); border-bottom: 1px solid oklch(0.45 0.08 80); background: oklch(0.25 0.035 80); color: oklch(0.9 0.04 80); font-size: 13px; }
 .noscript { position: fixed; bottom: 0; left: 0; right: 0; padding: 12px; background: var(--warn-bg); color: oklch(0.9 0.04 80); }
