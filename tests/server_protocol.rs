@@ -446,6 +446,75 @@ async fn control_commands_require_separate_authorization_and_round_trip_through_
     assert_eq!(detail["commands"][0]["status"], "accepted");
 }
 
+#[tokio::test]
+async fn one_time_pairing_creates_a_24_hour_control_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = server::router(Arc::new(AppState::new(config(dir.path())).unwrap()));
+    let mut pairing_request = request("POST", "/api/pairings", Body::empty());
+    pairing_request.headers_mut().insert(
+        "authorization",
+        format!("Bearer {CONTROL_TOKEN}").parse().unwrap(),
+    );
+    pairing_request
+        .headers_mut()
+        .insert("origin", "http://127.0.0.1:8787".parse().unwrap());
+    let (status, pairing) = send(&app, pairing_request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(pairing["qr"]
+        .as_str()
+        .unwrap()
+        .starts_with("data:image/svg+xml;base64,"));
+    let token = pairing["url"].as_str().unwrap().rsplit('/').next().unwrap();
+    let redeem_uri = format!("/pair/{token}");
+    let response = app
+        .clone()
+        .oneshot(request("GET", &redeem_uri, Body::empty()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()["location"], "/");
+    let cookie = response.headers()["set-cookie"].to_str().unwrap().to_owned();
+    assert!(cookie.contains("Max-Age=86400"));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("SameSite=Strict"));
+    assert_eq!(
+        app.clone()
+            .oneshot(request("GET", &redeem_uri, Body::empty()))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::GONE
+    );
+
+    let mut input = batch();
+    input["thread"]["channelId"] = json!("123456789012345678");
+    let (_, ingested) = send(&app, post("/api/ingest", &input, Some(TOKEN))).await;
+    let id = ingested["id"].as_str().unwrap();
+    assert_eq!(
+        send(
+            &app,
+            post(
+                "/api/heartbeat",
+                &json!({"botId":"bot","botName":"Test bot","status":"ready","pendingBatches":0}),
+                Some(TOKEN),
+            ),
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let mut command = post(
+        &format!("/api/threads/{id}/commands"),
+        &json!({"text":"Paired command"}),
+        None,
+    );
+    command.headers_mut().insert(
+        "cookie",
+        cookie.split(';').next().unwrap().parse().unwrap(),
+    );
+    assert_eq!(send(&app, command).await.0, StatusCode::OK);
+}
+
 #[test]
 fn validation_preserves_unknown_timestamps_and_rejects_unsafe_fields() {
     let sanitizer = Sanitizer::new(vec![TOKEN.to_owned()]);

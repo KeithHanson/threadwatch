@@ -453,6 +453,26 @@
     announce(state.paused ? 'Jumped to latest. Transcript is still paused.' : 'Following latest.');
   }
 
+  async function controlFetch(url, options = {}) {
+    const send = token => fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+    });
+    let token = sessionStorage.getItem('threadwatch-control-token');
+    let response = await send(token);
+    if (response.status !== 401) return response;
+    sessionStorage.removeItem('threadwatch-control-token');
+    token = window.prompt('Threadwatch control token');
+    if (!token) return response;
+    response = await send(token);
+    if (response.ok) sessionStorage.setItem('threadwatch-control-token', token);
+    else if (response.status === 401) sessionStorage.removeItem('threadwatch-control-token');
+    return response;
+  }
+
   document.addEventListener('submit', async event => {
     const form = event.target.closest('.chat-form');
     if (!form) return;
@@ -465,34 +485,21 @@
       feedback.textContent = 'Enter a message.';
       return;
     }
-    let token = sessionStorage.getItem('threadwatch-control-token');
-    if (!token) {
-      token = window.prompt('Threadwatch control token');
-      if (!token) {
-        feedback.textContent = 'Control authorization is required.';
-        return;
-      }
-    }
     input.disabled = true;
     button.disabled = true;
     feedback.textContent = 'Sending…';
     try {
-      const response = await fetch(form.dataset.commandUrl, {
+      const response = await controlFetch(form.dataset.commandUrl, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
       if (!response.ok) {
-        if (response.status === 401) sessionStorage.removeItem('threadwatch-control-token');
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || (response.status === 401
-          ? 'Control token rejected. Submit again to enter it.'
+          ? 'Control authorization is required.'
           : 'Message was not queued.'));
       }
-      sessionStorage.setItem('threadwatch-control-token', token);
       input.value = '';
       feedback.textContent = 'Queued for bridge delivery.';
       htmx.trigger($('.poller', form.closest('.thread-panel')), 'refresh');
@@ -505,7 +512,7 @@
     }
   });
 
-  document.addEventListener('click', event => {
+  document.addEventListener('click', async event => {
     const link = event.target.closest('.thread-link');
     const map = event.target.closest('.map-link');
     const bot = event.target.closest('.bot-open');
@@ -533,6 +540,24 @@
     if (event.target.closest('#menu')) openSidebar();
     if (event.target.closest('#close-drawer, #drawer-scrim')) closeSidebar();
     if (event.target.closest('.retry-open') && failedSelection) selectThread(failedSelection.id, failedSelection.title);
+    if (event.target.closest('.pair-device')) {
+      const dialog = $('#pair-dialog');
+      const status = $('#pair-status');
+      const qr = $('#pair-qr');
+      qr.removeAttribute('src');
+      status.textContent = 'Creating one-time pairing code…';
+      dialog.showModal();
+      const response = await controlFetch('api/pairings', { method: 'POST' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        status.textContent = body.error || 'Pairing authorization failed.';
+        return;
+      }
+      const pairing = await response.json();
+      qr.src = pairing.qr;
+      status.textContent = 'Scan now. This code expires in two minutes and works once.';
+      return;
+    }
     const panel = event.target.closest('.thread-panel');
     if (!panel) return;
     const state = view(panel);
