@@ -18,5 +18,8 @@ templates:
       TW_HOST="192.0.2.10"
       TW_DATA_DIR="/var/lib/threadwatch"
       TW_INGEST_TOKEN_FILE="/run/threadwatch/ingest-token"
+      TW_CONTROL_TOKEN_FILE="/run/threadwatch/control-token"
   - destination-path: /run/threadwatch/ingest-token
     template-content: '{{ with getSecretByName "<PROJECT_ID>" "dev" "/file-credentials" "TW_INGEST_TOKEN" }}{{ .Value }}{{ end }}'
+  - destination-path: /run/threadwatch/control-token
+    template-content: '{{ with getSecretByName "<PROJECT_ID>" "dev" "/file-credentials" "TW_CONTROL_TOKEN" }}{{ .Value }}{{ end }}'
