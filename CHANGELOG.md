@@ -20,6 +20,7 @@
 - Preserve existing collector state directories and delivery IDs as the integrated bridge reporter's migration contract.
 - Keep mobile thread details readable by hiding transcript search/pause/follow controls and placing a single-line-height chat field beside Send.
 - Compress the mobile thread header into a compact title/status row and single task-summary row, removing duplicated navigation and secondary timestamps.
+- Replace the mobile Discord action with a Todos control that reveals the complete task list on demand while keeping it out of the default transcript view.
 
 ## 0.2.0
 
