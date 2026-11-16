@@ -284,6 +284,10 @@
       toggle.textContent = state.tasksOpen ? 'Collapse' : 'Show todos';
       $('.todo-list', panel).hidden = !state.tasksOpen;
     }
+    const mobileToggle = $('.mobile-todos', panel);
+    mobileToggle?.setAttribute('aria-expanded', String(state.tasksOpen));
+    if (mobileToggle) mobileToggle.textContent = state.tasksOpen ? 'Close todos' : 'Todos';
+    $('.todo-panel', panel)?.classList.toggle('mobile-open', state.tasksOpen);
     $$('.jump', panel).forEach(button => button.setAttribute('aria-pressed', String(state.following && !searching)));
     const stale = !state.paused && Date.now() - state.checked > 15000;
     const health = state.failed || stale;
@@ -545,7 +549,7 @@
       refreshControls(panel);
     }
     if (event.target.closest('.jump')) follow(panel);
-    if (event.target.closest('.toggle-todos')) {
+    if (event.target.closest('.toggle-todos, .mobile-todos')) {
       state.tasksOpen = !state.tasksOpen;
       refreshControls(panel);
       if (state.following && !$('.transcript-search', panel).value.trim()) setScroll(panel, $('.transcript-scroll', panel).scrollHeight);
@@ -641,7 +645,7 @@
       state.oldCount = loadedCount(panel);
       state.metaTop = $('.thread-header', panel).scrollTop;
       state.todosTop = $('.todo-list', panel)?.scrollTop || 0;
-      state.focus = document.activeElement?.matches('.discord-link, .toggle-todos, .older, .todo-list')
+      state.focus = document.activeElement?.matches('.discord-link, .mobile-todos, .toggle-todos, .older, .todo-list')
         ? document.activeElement.className : null;
       state.adjusting = true;
     }
@@ -658,7 +662,7 @@
         toggleFilter: Boolean(focused?.closest('.toggle-filter')),
         panel: current,
         metaTop: current ? $('.thread-header', current).scrollTop : 0,
-        metaFocus: focused?.matches('.discord-link') ? '.discord-link' : focused?.matches('.thread-header .map-link') ? '.thread-header .map-link' : null,
+        metaFocus: focused?.matches('.mobile-todos') ? '.mobile-todos' : focused?.matches('.discord-link') ? '.discord-link' : focused?.matches('.thread-header .map-link') ? '.thread-header .map-link' : null,
       };
     }
   });

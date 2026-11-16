@@ -438,6 +438,7 @@ fn render_meta(thread: &Value, snapshot: &Value, oob: bool) -> String {
     {
         let _ = write!(html, "<a class=\"discord-link\" href=\"https://discord.com/channels/{guild}/{channel}\" target=\"_blank\" rel=\"noopener noreferrer\">Open in Discord ↗</a>");
     }
+    let _ = write!(html, "<button class=\"mobile-todos\" type=\"button\" aria-expanded=\"false\" aria-controls=\"todos-{k}\">Todos</button>");
     html.push_str("</div>");
     if source_status != "ready" {
         let _ = write!(html, "<div class=\"source-notice\" role=\"status\"><strong>Source {}.</strong> {}", status(source_status).0.to_ascii_lowercase(), match source_status {
