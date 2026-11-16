@@ -65,12 +65,22 @@ The bridge's existing Discord token provides optional read-only thread-title and
 
 ## Interface
 
-The dashboard groups working and historical threads by bot. It shows actual todos, messages, expandable tool starts/calls/results, errors, titles, and source health. Search, older-history loading, and pause/follow support long transcripts. Updates poll saved records every two seconds, not token-by-token model output.
+The dashboard opens on a full-width Agent map, without a global sidebar. Bot cards connect to their threads with short titles, task counts, latest-record previews, and collector health. Active shows Working, Queued, and Waiting; Past shows Completed, Failed, Stopped, and Unknown. This filter is shared between the map and focused agent rail and survives in-page navigation. Offline-source alerts explain reporting-loss transitions to Unknown and link to Past; Unknown does not mean completed.
 
-The server marks reporting offline after 45 seconds without a heartbeat. Active task states then show Unknown, retaining the last reported state. This detects collector reporting loss, not necessarily a stopped model process. Queued batches and sources with no threads remain visible.
+Select a bot card to open its most recently updated thread in the current filter. If that bot has no matching threads, the filter switches and its most recent thread opens instead. Selecting a thread directly opens that thread. Thread mode shows only that bot's identity, collector health, and filtered threads in the left rail. Return through Agent map to switch bots. Collectors without threads remain visible as noninteractive map cards. The old global title/bot search and Reporting sources panel have been removed; transcript search remains available.
+
+Select a thread for its recorded task list and chronological transcript. Tasks collapse on small/short screens; messages, tool starts/calls/results, and operational notices have separate presentations. Tool errors expand by default. Search covers loaded records only; load older pages to search farther back. Pause freezes the selected detail, not collection, and shows the number of newly recorded events waiting. Scrolling away from the bottom holds your position while new activity arrives; Follow latest returns to the bottom without resuming a paused view. History replacement clears the old generation and displays a notice rather than mixing records.
+
+Tool cards lead with the recorded intent and show commands, code, paths, queries, proposed patches, or task details without requiring JSON inspection. Device/API writes are distinguished from file writes. Full sanitized records remain expandable; malformed, unknown, and withheld inputs retain honest fallbacks. Result receipts do not imply success, and recognized shell background-launch receipts do not imply job completion.
+
+Calls, starts, and results combine only when the loaded records carry the same explicit session ID, tool-call ID, and tool name. Interleaved operations and reused IDs in different sessions stay separate; legacy records without both IDs are never guessed into groups. Loading older pages can complete a partial group. Search, pause counts, and pagination still count original records, while expansion, keyboard focus, and held-scroll anchors survive incoming results.
 
 Upgrade the server before bridges to retain new optional metadata. Updated bridges attach native session/call IDs to new records when available, including after resuming an older checkpoint with a recoverable session header. Existing stored history is not rewritten; legacy inputs still get readable summaries from their sanitized text.
+
+Updates poll saved records every two seconds, not token-by-token model output. The server marks reporting offline after 45 seconds without a heartbeat. Active task states then show Unknown, retaining the last reported state. This detects collector reporting loss, not necessarily a stopped model process. Browser connection health, collector health, task status, and local pause/follow state remain separate.
+
 On mobile, the map has no drawer or health strip: reporting health is on the bot cards and map alert. Thread mode provides a Map link and a keyboard-accessible Threads drawer containing only the selected bot. Instrument Sans and JetBrains Mono are bundled in the binary; no font CDN is required. Bot avatars use validated Discord CDN URLs when available, otherwise an initial-letter fallback. The reporting bridge can obtain its bot avatar through its existing Discord credential.
+
 ## Automatic startup
 
 Install the binary at a stable executable path first. The native installer writes, validates, enables, and restarts the server service as a non-root user:
@@ -126,9 +136,13 @@ Use current timestamps, stable bot/thread/event IDs, and chronological events. R
 
 Thread states: `working`, `queued`, `waiting`, `completed`, `failed`, `unknown`, `stopped`. Todo states: `pending`, `in_progress`, `completed`. Event kinds: `message`, `tool_call`, `tool_start`, `tool_result`, `status`, `todo_edit`, `session_exit`, `import_error`. Never send hidden reasoning or credentials.
 
-The ingest credential grants write access for trusted producers; it is not a viewer token or an identity boundary between mutually untrusted bots. The service returns its encoded thread ID and revision. Read endpoints are `GET /api/threads` and `GET /api/threads/:id?limit=100&before=<cursor>`; pages are chronological, with an opaque thread-bound cursor for earlier history.
+Tool events may additionally carry `toolCallId`, `sessionId`, an `arguments` object, and `intent`. IDs are bounded to 200 UTF-16 units and intent to 4,000; structured arguments are bounded to 64 KiB, depth 30, and 4,096 nodes. These fields are sanitized before storage, and withheld arguments remain withheld rather than being restored through structured metadata. Keep the original sanitized `text` for inspection and older consumers.
 
-Durable producers may include `delivery: {"id": "stable-batch-id", "reset": false}`. Retries must preserve the exact batch and ID. A first replacement batch uses `reset: true`; subsequent chunks use `false`. A reset changes the returned thread's `historyVersion`, allowing viewers to discard replaced history. `POST /api/heartbeat` uses the same bearer token and accepts `botId`, `botName`, `status` (`ready`, `degraded`, or `unavailable`), `pendingBatches`, and an optional sanitized error summary.
+The ingest credential grants write access for trusted producers; it is not a viewer token or an identity boundary between mutually untrusted bots. The service returns its encoded thread ID and revision. Read endpoints are `GET /api/threads` and `GET /api/threads/:id?limit=100&before=<cursor>`; pages are chronological, with an opaque thread-bound cursor for earlier history. The index includes `shortTitle`, `todoCount`, `todoCompleted`, `eventCount`, and a bounded `latestEvent` preview without loading full transcripts. Detail includes `eventCount` from the same stored snapshot as its records, for accurate paused-view baselines. Producers may supply a short title and a validated Discord `avatarUrl`; missing short titles fall back to the first 24 Unicode characters of the full title.
+
+Durable producers may include `delivery: {"id": "stable-batch-id", "reset": false}`. Retries must preserve the exact batch and ID. A first replacement batch uses `reset: true`; subsequent chunks use `false`. A reset changes the returned thread's `historyVersion`, allowing viewers to discard replaced history. `POST /api/heartbeat` uses the same bearer token and accepts `botId`, `botName`, `status` (`ready`, `degraded`, or `unavailable`), `pendingBatches`, an optional sanitized error summary, and optional `avatarUrl`.
+
+Avatar URLs must use `https://cdn.discordapp.com/avatars/<numeric-user-id>/<32-hex-hash>.png`, optionally with an `a_` hash prefix and `?size=96`. Other origins, credentials, paths, and query strings are rejected. The collector caches its optional Discord identity lookup for an hour, shares Discord rate-limit handling with title lookups, and retains only safe identity metadata. Avatar availability does not gate reporting.
 
 
 ## Transcript boundaries
@@ -147,5 +161,7 @@ cargo build --locked --release
 Rust tests cover protocol, persistence, collector delivery, and escaping. Verify interface changes in a real browser.
 
 `static/htmx.min.js` is htmx 2.0.8 under the bundled `static/htmx.LICENSE` (0BSD), from https://unpkg.com/htmx.org@2.0.8/dist/htmx.min.js. SHA-256: `22283ef68cb7545914f0a88a1bdedc7256a703d1d580c1d255217d0a50d31313`.
+
+The redesign bundles Latin variable WOFF2 subsets of Instrument Sans (400–600) and JetBrains Mono (400–500), distributed under the SIL Open Font License. Their licenses are in `static/instrument-sans.LICENSE` and `static/jetbrains-mono.LICENSE`. Font files originate from Google Fonts; browsers load them locally from the embedded assets. Other character ranges use system fallbacks.
 
 Do not commit token files, local bridge configuration, transcript databases, or runtime state.

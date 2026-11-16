@@ -82,11 +82,19 @@ fn migrates_original_schema_without_losing_history_receipts_or_heartbeats() {
     drop(db);
     let mut store = Store::open(directory.path()).unwrap();
     assert_eq!(store.revision().unwrap(), "7");
-    assert_eq!(store.list().unwrap(), vec![saved.clone()]);
+    let mut summary = saved.clone();
+    summary["shortTitle"] = json!("Task");
+    summary["todoCount"] = json!(1);
+    summary["todoCompleted"] = json!(0);
+    summary["eventCount"] = json!(1);
+    summary["latestEvent"] = json!({"id":"old", "timestamp":0, "kind":"message", "role":"assistant", "name":null, "text":"old", "isError":false});
+    assert_eq!(store.list().unwrap(), vec![summary]);
     let detail = store.detail(id, None, 100).unwrap().unwrap();
     assert_eq!(detail["thread"], saved);
     assert_eq!(detail["todos"], todos);
     assert_eq!(detail["events"], json!([event("old")]));
+    // Sequence numbers are not counts: migrated histories can contain gaps.
+    assert_eq!(detail["eventCount"], 1);
     assert_eq!(store.collector_sources(45_999).unwrap(), vec![heartbeat]);
     assert_eq!(
         store.collector_sources(46_000).unwrap()[0]["status"],
@@ -310,9 +318,11 @@ fn pagination_is_stable_scoped_and_updates_events_in_place() {
         .unwrap();
     let newest = store.detail(&id, None, 2).unwrap().unwrap();
     assert_eq!(newest["events"], json!([event("two"), event("three")]));
+    assert_eq!(newest["eventCount"], 3);
     let cursor = newest["nextCursor"].as_str().unwrap();
     let older = store.detail(&id, Some(cursor), 2).unwrap().unwrap();
     assert_eq!(older["events"], json!([event("one")]));
+    assert_eq!(older["eventCount"], 3);
     assert!(older["nextCursor"].is_null());
     assert!(store.detail("another-thread", Some(cursor), 2).is_err());
     for invalid in [
@@ -334,6 +344,76 @@ fn pagination_is_stable_scoped_and_updates_events_in_place() {
     let revision = store.revision().unwrap();
     store.ingest(thread, &[replacement], None, None).unwrap();
     assert_eq!(store.revision().unwrap(), revision);
+}
+
+#[test]
+fn index_summaries_follow_updates_deduplication_and_history_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = Store::open(directory.path()).unwrap();
+    let mut thread = thread("bot", "thread", "working");
+    thread["title"] = json!("界".repeat(30));
+    let id = thread["id"].as_str().unwrap().to_owned();
+    store.ingest(thread.clone(), &[], None, None).unwrap();
+    let empty = store.list().unwrap().remove(0);
+    assert_eq!(empty["shortTitle"], "界".repeat(24));
+    assert_eq!(empty["todoCount"], 0);
+    assert_eq!(empty["todoCompleted"], 0);
+    assert_eq!(empty["eventCount"], 0);
+    assert!(empty["latestEvent"].is_null());
+
+    let mut latest = event("two");
+    latest["text"] = json!(format!("\n  \n  {}\nnot the preview", "😀".repeat(300)));
+    latest["kind"] = json!("tool_result");
+    latest["name"] = json!("bash");
+    latest["isError"] = json!(true);
+    let mut first = event("one");
+    first["timestamp"] = json!(99_000);
+    let todos = json!([
+        {"text":"Finished","status":"completed"},
+        {"text":"Current","status":"in_progress"},
+        {"text":"Later","status":"pending"}
+    ]);
+    store.ingest(thread.clone(), &[first, latest.clone()], Some(&todos), None).unwrap();
+    let summary = store.list().unwrap().remove(0);
+    assert_eq!(summary["todoCount"], 3);
+    assert_eq!(summary["todoCompleted"], 1);
+    assert_eq!(summary["eventCount"], 2);
+    assert_eq!(summary["latestEvent"]["id"], "two");
+    assert_eq!(summary["latestEvent"]["text"], "😀".repeat(240));
+    assert_eq!(summary["latestEvent"]["name"], "bash");
+    assert_eq!(summary["latestEvent"]["isError"], true);
+
+    thread["shortTitle"] = json!("Chosen label");
+    latest["text"] = json!("\n corrected result\nignored");
+    store.ingest(thread.clone(), &[latest.clone()], None, None).unwrap();
+    let updated = store.list().unwrap().remove(0);
+    assert_eq!(updated["shortTitle"], "Chosen label");
+    assert_eq!(updated["eventCount"], 2);
+    assert_eq!(updated["latestEvent"]["text"], "corrected result");
+    assert_eq!(updated["todoCompleted"], 1);
+    let revision = store.revision().unwrap();
+    store.ingest(thread.clone(), &[latest], None, None).unwrap();
+    assert_eq!(store.revision().unwrap(), revision);
+    assert_eq!(store.list().unwrap(), vec![updated]);
+
+    let reset = json!({"id":"new-generation","reset":true});
+    store.ingest(thread.clone(), &[], None, Some(&reset)).unwrap();
+    let reset_summary = store.list().unwrap().remove(0);
+    assert_eq!(reset_summary["eventCount"], 0);
+    assert_eq!(reset_summary["todoCount"], 0);
+    assert_eq!(reset_summary["todoCompleted"], 0);
+    assert!(reset_summary["latestEvent"].is_null());
+    assert_eq!(reset_summary["historyVersion"], "new-generation");
+    assert_eq!(store.detail(&id, None, 1).unwrap().unwrap()["eventCount"], 0);
+
+    store.ingest(thread.clone(), &[event("new")], None, None).unwrap();
+    store.ingest(thread, &[], None, Some(&reset)).unwrap();
+    drop(store);
+    let store = Store::open(directory.path()).unwrap();
+    let restored = store.list().unwrap().remove(0);
+    assert_eq!(restored["eventCount"], 1);
+    assert_eq!(restored["latestEvent"]["id"], "new");
+    assert_eq!(store.detail(&id, None, 1).unwrap().unwrap()["eventCount"], 1);
 }
 
 #[test]

@@ -2,7 +2,16 @@
 
 ## Unreleased
 
-- Show Active before All threads and select Active by default.
+- Render intent-first tool cards with readable commands, code, paths, proposed patches, API/device operations, safe raw disclosures, and explicit error/background-receipt states.
+- Preserve sanitized structured arguments and native session/call IDs through collection and ingestion; group only exactly correlated lifecycle records, including across loaded pages, without guessing legacy history.
+- Retain raw-record search/counts/cursors, disclosure expansion and focus, pause/catch-up behavior, and held-scroll anchors while grouped results arrive.
+- Implement the supplied v2 map-first design: full-width Agent map, clickable bot cards, and a focused agent rail shown only beside that bot's thread detail.
+- Replace Active/All with shared Active/Past filters and global/per-bot counts; move offline-source alerts to the map and automatically select the most recent matching thread when opening a bot.
+- Remove the global sidebar search, global Reporting sources panel, and mobile health strip. Mobile map mode has no drawer; thread mode exposes Map and a bot-scoped Threads drawer.
+- Preserve the compact transcript, collapsible recorded tasks, pending-record counts while paused, new-record follow controls, and history-replacement notices.
+- Expose bounded latest-event previews, short titles, todo totals, and snapshot-consistent event counts; collect optional Discord avatars with validated CDN URLs.
+- Bundle Instrument Sans and JetBrains Mono locally, preserving the single Rust binary and server-rendered htmx architecture.
+- Select Active by default; Past includes Unknown without implying successful completion.
 - Sort agents alphabetically and their threads by last update, most recent first; unknown update times sort last.
 - Use relative browser URLs so the dashboard works beneath a stripped reverse-proxy path prefix.
 - Allow explicitly configured reverse-proxy hostnames while retaining private-peer checks.
