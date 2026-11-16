@@ -212,7 +212,7 @@ async fn shell(State(state): State<Arc<AppState>>, Query(params): Query<Params>)
     html.push_str(&render_index(&snapshot, selected.map(|thread| text(thread, "id"))));
     html.push_str(r##"</div></aside><main id="thread-main" tabindex="-1"><header class="mobile-header"><a id="mobile-map-link" class="map-link" href="./">← Map</a><strong id="mobile-title">"##);
     html.push_str(&escape(selected.map(|thread| text(thread, "botName")).unwrap_or("Threadwatch")));
-    html.push_str(r##"</strong><button id="menu" type="button" aria-controls="thread-sidebar" aria-expanded="false">Threads</button><span id="mobile-connection" class="healthy" role="status" aria-label="Server Connected">● Live</span></header><header id="map-topbar" class="map-topbar"><div class="brand-row"><strong>Threadwatch</strong><span class="read-only">Read-only</span></div><div class="connection" role="status"><span class="micro-label">Server</span><span id="connection" class="healthy">● Connected</span><span id="connection-age">refreshed 0s ago</span></div></header><div id="server-error" class="notice" role="alert" hidden></div><div id="request-error" class="notice" role="alert" hidden><span></span><button class="retry-open" type="button" hidden>Retry opening</button></div>"##);
+    html.push_str(r##"</strong><button id="menu" type="button" aria-controls="thread-sidebar" aria-expanded="false">Threads</button><span id="mobile-connection" class="healthy" role="status" aria-label="Server Connected">● Live</span></header><header id="map-topbar" class="map-topbar"><div class="brand-row"><strong>Threadwatch</strong><span class="read-only">Fleet console</span></div><div class="connection" role="status"><span class="micro-label">Server</span><span id="connection" class="healthy">● Connected</span><span id="connection-age">refreshed 0s ago</span></div></header><div id="server-error" class="notice" role="alert" hidden></div><div id="request-error" class="notice" role="alert" hidden><span></span><button class="retry-open" type="button" hidden>Retry opening</button></div>"##);
     let _ = write!(html, "<section id=\"agent-map\" aria-labelledby=\"map-heading\"{}><div id=\"map-data\">", if selected.is_none() { "" } else { " hidden" });
     html.push_str(&render_map(&snapshot));
     html.push_str(r##"</div></section><section id="opening" role="status" hidden><span>Opening thread…</span><h1></h1><div class="skeleton"></div><div class="skeleton"></div></section>"##);
@@ -408,6 +408,7 @@ fn render_panel(detail: &Value, snapshot: &Value) -> String {
     let _ = write!(html, "<div class=\"events\" id=\"events-{k}\">");
     render_events(&mut html, list(detail, "events"), &k);
     html.push_str("</div><div class=\"empty-events empty-state\"><p>Nothing recorded yet.</p><button class=\"search-older\" type=\"button\" hidden>Load older records</button><button class=\"clear-search\" type=\"button\" hidden>Clear search</button></div></div><button class=\"new-records jump\" type=\"button\" hidden></button></div></section>");
+    html.push_str(&render_chat(detail, false));
     let _ = write!(html, "<div class=\"poller\" hx-get=\"ui/poll?id={}\" hx-trigger=\"every 2s, refresh\" hx-target=\"#events-{k}\" hx-swap=\"beforeend\" aria-hidden=\"true\"></div></section>", url(id));
     html
 }
@@ -485,6 +486,55 @@ fn render_todos(detail: &Value, oob: bool) -> String {
         html.push_str("</ol>");
     }
     html.push_str("</section>");
+    html
+}
+
+fn render_chat_commands(detail: &Value, k: &str, oob: bool) -> String {
+    let mut html = format!(
+        "<div class=\"chat-commands\" id=\"chat-commands-{k}\"{} aria-live=\"polite\">",
+        if oob { " hx-swap-oob=\"outerHTML\"" } else { "" }
+    );
+    for command in list(detail, "commands") {
+        let status = text(command, "status");
+        let _ = write!(
+            html,
+            "<article class=\"chat-command chat-{status}\"><div class=\"message-text\">{}</div><div class=\"chat-command-meta\"><time data-time=\"{}\"><span class=\"time-label\">{}</span><span class=\"time-full sr-only\"></span></time><span>{}</span></div>",
+            escape(text(command, "text")),
+            escape(&scalar(&command["createdAt"])),
+            time(&command["createdAt"]),
+            match status {
+                "accepted" => "Accepted by bridge",
+                "rejected" => "Rejected by bridge",
+                _ => "Waiting for bridge",
+            }
+        );
+        if let Some(error) = command["error"].as_str().filter(|error| !error.is_empty()) {
+            let _ = write!(html, "<p class=\"chat-error\">{}</p>", escape(error));
+        }
+        html.push_str("</article>");
+    }
+    html.push_str("</div>");
+    html
+}
+
+fn render_chat(detail: &Value, oob: bool) -> String {
+    let id = text(&detail["thread"], "id");
+    let k = key(id);
+    if oob {
+        return render_chat_commands(detail, &k, true);
+    }
+    let mut html = format!(
+        "<section class=\"chat-panel\" id=\"chat-{k}\" aria-labelledby=\"chat-heading-{k}\"><div class=\"section-heading\"><h2 id=\"chat-heading-{k}\">Chat</h2><span class=\"chat-hint\">Messages are queued through the reporting bridge.</span></div>{}",
+        render_chat_commands(detail, &k, false)
+    );
+    let disabled = detail["controlEnabled"] != true || text(&detail["thread"], "status") == "unknown";
+    let _ = write!(
+        html,
+        "<form class=\"chat-form\" data-command-url=\"api/threads/{}/commands\"><label for=\"chat-input-{k}\" class=\"sr-only\">Message the agent</label><textarea id=\"chat-input-{k}\" maxlength=\"20000\" rows=\"3\" placeholder=\"Message the agent…\"{}></textarea><div><span class=\"chat-feedback\" role=\"status\"></span><button type=\"submit\"{}>Send</button></div></form></section>",
+        url(id),
+        if disabled { " disabled" } else { "" },
+        if disabled { " disabled" } else { "" },
+    );
     html
 }
 
@@ -776,6 +826,7 @@ fn update(state: &AppState, params: Params, older: bool) -> Response {
     let Ok(snapshot) = state.index() else { return failure(StatusCode::INTERNAL_SERVER_ERROR); };
     html.push_str(&render_meta(&detail["thread"], &snapshot, true));
     html.push_str(&render_todos(&detail, true));
+    html.push_str(&render_chat(&detail, true));
     if older || replace { html.push_str(&render_pager(&detail, true)); }
     let mut headers = HeaderMap::new();
     for (name, value) in [

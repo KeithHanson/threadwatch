@@ -13,6 +13,7 @@ use threadwatch::{
 use tower::ServiceExt;
 
 const TOKEN: &str = "protocol-shared-ingestion-credential-123456789";
+const CONTROL_TOKEN: &str = "protocol-control-credential-1234567890";
 fn config(path: &std::path::Path) -> Config {
     Config {
         local: true,
@@ -21,6 +22,7 @@ fn config(path: &std::path::Path) -> Config {
         allowed_hosts: Vec::new(),
         port: 8787,
         ingest_token: TOKEN.into(),
+        control_token: CONTROL_TOKEN.into(),
         data_dir: path.to_owned(),
     }
 }
@@ -360,6 +362,88 @@ async fn ingestion_authentication_body_limits_and_sanitization_precede_persisten
     assert_eq!(directives["img-src"], ["'self'", "data:", "https://cdn.discordapp.com"]);
     assert_eq!(directives["script-src"], ["'self'"]);
     assert_eq!(directives["connect-src"], ["'self'"]);
+}
+
+#[tokio::test]
+async fn control_commands_require_separate_authorization_and_round_trip_through_bridge_polling() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = server::router(Arc::new(AppState::new(config(dir.path())).unwrap()));
+    let mut input = batch();
+    input["thread"]["channelId"] = json!("123456789012345678");
+    let (_, ingested) = send(&app, post("/api/ingest", &input, Some(TOKEN))).await;
+    let id = ingested["id"].as_str().unwrap();
+    let endpoint = format!("/api/threads/{id}/commands");
+
+    assert_eq!(
+        send(&app, post(&endpoint, &json!({"text":"Ship it"}), Some(TOKEN)))
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        send(
+            &app,
+            post(&endpoint, &json!({"text":"Ship it"}), Some(CONTROL_TOKEN))
+        )
+        .await
+        .0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        send(
+            &app,
+            post(
+                "/api/heartbeat",
+                &json!({
+                    "botId":"bot",
+                    "botName":"Test bot",
+                    "status":"ready",
+                    "pendingBatches":0
+                }),
+                Some(TOKEN),
+            ),
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (status, command) = send(
+        &app,
+        post(&endpoint, &json!({"text":"Ship it"}), Some(CONTROL_TOKEN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(command["status"], "pending");
+
+    let (status, pending) = send(
+        &app,
+        post("/api/commands/poll", &json!({"botId":"bot"}), Some(TOKEN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(pending["commands"][0]["id"], command["id"]);
+    assert_eq!(
+        pending["commands"][0]["targetThreadId"],
+        "123456789012345678"
+    );
+
+    let command_id = command["id"].as_str().unwrap();
+    let (status, _) = send(
+        &app,
+        post(
+            &format!("/api/commands/{command_id}/ack"),
+            &json!({"botId":"bot","accepted":true}),
+            Some(TOKEN),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, detail) = send(
+        &app,
+        request("GET", &format!("/api/threads/{id}?limit=1"), Body::empty()),
+    )
+    .await;
+    assert_eq!(detail["commands"][0]["status"], "accepted");
 }
 
 #[test]
