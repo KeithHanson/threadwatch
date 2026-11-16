@@ -1,7 +1,7 @@
 mod install;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -18,34 +18,21 @@ struct Cli {
 enum Command {
     /// Serve the dashboard and ingestion API.
     Serve,
-    /// Collect one bridge's activity and deliver it to the server.
-    Collect {
-        #[arg(long)]
-        once: bool,
-    },
-    /// Install, enable, and restart an unprivileged systemd service (requires root).
+    /// Install, enable, and restart the unprivileged server service (requires root).
     InstallService {
-        #[arg(value_enum)]
-        role: Role,
         #[arg(long)]
         user: String,
     },
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-pub enum Role {
-    Server,
-    Collector,
-}
-
 fn execute() -> Result<()> {
     let cli = Cli::parse();
-    if let Command::InstallService { role, user } = &cli.command {
+    if let Command::InstallService { user } = &cli.command {
         let env = cli
             .env_file
             .as_ref()
             .context("--env-file is required to install a service")?;
-        return install::install(*role, env, user);
+        return install::install(env, user);
     }
     // dotenv is loaded before Tokio creates any worker threads.
     if let Some(path) = &cli.env_file {
@@ -57,10 +44,6 @@ fn execute() -> Result<()> {
     match cli.command {
         Command::Serve => runtime.block_on(threadwatch::server::run(
             threadwatch::server::Config::from_env()?,
-        )),
-        Command::Collect { once } => runtime.block_on(threadwatch::collector::run(
-            threadwatch::collector::Config::from_env()?,
-            once,
         )),
         Command::InstallService { .. } => unreachable!(),
     }
