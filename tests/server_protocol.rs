@@ -53,6 +53,13 @@ fn post(uri: &str, value: &Value, token: Option<&str>) -> Request<Body> {
     }
     request
 }
+fn browser_post(uri: &str, value: &Value) -> Request<Body> {
+    let mut request = post(uri, value, None);
+    request
+        .headers_mut()
+        .insert("origin", "http://127.0.0.1:8787".parse().unwrap());
+    request
+}
 async fn send(router: &Router, request: Request<Body>) -> (StatusCode, Value) {
     let response = router.clone().oneshot(request).await.unwrap();
     let status = response.status();
@@ -365,7 +372,7 @@ async fn ingestion_authentication_body_limits_and_sanitization_precede_persisten
 }
 
 #[tokio::test]
-async fn control_commands_require_separate_authorization_and_round_trip_through_bridge_polling() {
+async fn trusted_viewer_commands_round_trip_through_bridge_polling() {
     let dir = tempfile::tempdir().unwrap();
     let app = server::router(Arc::new(AppState::new(config(dir.path())).unwrap()));
     let mut input = batch();
@@ -375,18 +382,15 @@ async fn control_commands_require_separate_authorization_and_round_trip_through_
     let endpoint = format!("/api/threads/{id}/commands");
 
     assert_eq!(
-        send(&app, post(&endpoint, &json!({"text":"Ship it"}), Some(TOKEN)))
+        send(&app, post(&endpoint, &json!({"text":"Ship it"}), None))
             .await
             .0,
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(
-        send(
-            &app,
-            post(&endpoint, &json!({"text":"Ship it"}), Some(CONTROL_TOKEN))
-        )
-        .await
-        .0,
+        send(&app, browser_post(&endpoint, &json!({"text":"Ship it"})))
+            .await
+            .0,
         StatusCode::SERVICE_UNAVAILABLE
     );
     assert_eq!(
@@ -407,11 +411,8 @@ async fn control_commands_require_separate_authorization_and_round_trip_through_
         .0,
         StatusCode::OK
     );
-    let (status, command) = send(
-        &app,
-        post(&endpoint, &json!({"text":"Ship it"}), Some(CONTROL_TOKEN)),
-    )
-    .await;
+    let (status, command) =
+        send(&app, browser_post(&endpoint, &json!({"text":"Ship it"}))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(command["status"], "pending");
 
@@ -451,10 +452,6 @@ async fn one_time_pairing_creates_a_24_hour_control_session() {
     let dir = tempfile::tempdir().unwrap();
     let app = server::router(Arc::new(AppState::new(config(dir.path())).unwrap()));
     let mut pairing_request = request("POST", "/api/pairings", Body::empty());
-    pairing_request.headers_mut().insert(
-        "authorization",
-        format!("Bearer {CONTROL_TOKEN}").parse().unwrap(),
-    );
     pairing_request
         .headers_mut()
         .insert("origin", "http://127.0.0.1:8787".parse().unwrap());
