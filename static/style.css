@@ -58,6 +58,14 @@ h1 { font-size: 21px; font-weight: 600; }
 h2 { font-size: 13px; font-weight: 600; }
 [hidden] { display: none !important; }
 ::selection { color: var(--app); background: var(--focus); }
+dialog { width: min(92vw, 420px); padding: 20px; border: 1px solid var(--control); border-radius: 10px; background: var(--card); color: inherit; box-shadow: 0 20px 60px oklch(0 0 0 / .55); }
+dialog::backdrop { background: oklch(0.08 0.005 250 / .72); }
+dialog form { float: right; margin: -8px -8px 8px 12px; }
+dialog h2 { margin-bottom: 6px; font-size: 18px; }
+dialog p { color: var(--secondary); }
+#pair-qr { display: block; width: min(100%, 320px); aspect-ratio: 1; margin: 18px auto 12px; border: 10px solid white; border-radius: 6px; background: white; }
+#pair-qr:not([src]) { visibility: hidden; }
+#pair-status { min-height: 20px; text-align: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .skip-link { position: absolute; left: 8px; top: -50px; z-index: 40; padding: 6px 10px; border-radius: 4px; background: var(--focus); color: var(--app); }
 .skip-link:focus { top: 8px; }
@@ -321,6 +329,7 @@ progress::-moz-progress-bar { background: oklch(0.78 0.08 155); border-radius: 2
 .is-mobile .mobile-todos { display: inline-flex; align-items: center; min-height: 32px; padding: 0 8px; }
 .is-mobile .todo-panel { display: none; }
 .is-mobile .todo-panel.mobile-open { display: block; }
+.is-mobile .pair-device { display: none; }
 .is-mobile .transcript-controls { display: none; }
 .is-mobile .event { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .is-mobile .event-tool > .event-content { padding: 12px; }
