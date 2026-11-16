@@ -453,25 +453,6 @@
     announce(state.paused ? 'Jumped to latest. Transcript is still paused.' : 'Following latest.');
   }
 
-  async function controlFetch(url, options = {}) {
-    const send = token => fetch(url, {
-      ...options,
-      headers: {
-        ...(options.headers || {}),
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-      },
-    });
-    let token = sessionStorage.getItem('threadwatch-control-token');
-    let response = await send(token);
-    if (response.status !== 401) return response;
-    sessionStorage.removeItem('threadwatch-control-token');
-    token = window.prompt('Threadwatch control token');
-    if (!token) return response;
-    response = await send(token);
-    if (response.ok) sessionStorage.setItem('threadwatch-control-token', token);
-    else if (response.status === 401) sessionStorage.removeItem('threadwatch-control-token');
-    return response;
-  }
 
   document.addEventListener('submit', async event => {
     const form = event.target.closest('.chat-form');
@@ -489,16 +470,14 @@
     button.disabled = true;
     feedback.textContent = 'Sending…';
     try {
-      const response = await controlFetch(form.dataset.commandUrl, {
+      const response = await fetch(form.dataset.commandUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body.error || (response.status === 401
-          ? 'Control authorization is required.'
-          : 'Message was not queued.'));
+        throw new Error(body.error || 'Message was not queued.');
       }
       input.value = '';
       feedback.textContent = 'Queued for bridge delivery.';
@@ -547,7 +526,7 @@
       qr.removeAttribute('src');
       status.textContent = 'Creating one-time pairing code…';
       dialog.showModal();
-      const response = await controlFetch('api/pairings', { method: 'POST' });
+      const response = await fetch('api/pairings', { method: 'POST' });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         status.textContent = body.error || 'Pairing authorization failed.';

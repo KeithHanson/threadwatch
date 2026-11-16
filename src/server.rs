@@ -726,16 +726,15 @@ fn control_session_valid(state: &AppState, headers: &HeaderMap, now: i64) -> boo
     true
 }
 
-fn authorize_control(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
-    if !state.config.control_token.is_empty()
-        && (bearer_digest(headers).is_some_and(|digest| digest_matches(&digest, &state.control_digest))
-            || control_session_valid(state, headers, chrono::Utc::now().timestamp()))
+fn authorize_browser_control(state: &AppState, headers: &HeaderMap) -> ApiResult<()> {
+    if headers.contains_key(header::ORIGIN)
+        || control_session_valid(state, headers, chrono::Utc::now().timestamp())
     {
         return Ok(());
     }
     Err(ApiError(
         StatusCode::UNAUTHORIZED,
-        "Control authorization required".into(),
+        "Browser control authorization required".into(),
     ))
 }
 const PAIRING_TTL_MS: i64 = 2 * 60 * 1000;
@@ -745,7 +744,7 @@ async fn create_pairing(
     State(state): State<Arc<AppState>>,
     request: Request,
 ) -> ApiResult<Json<Value>> {
-    authorize_control(&state, request.headers())?;
+    authorize_browser_control(&state, request.headers())?;
     let origin = request
         .headers()
         .get(header::ORIGIN)
@@ -836,7 +835,7 @@ async fn create_command(
     Path(id): Path<String>,
     request: Request,
 ) -> ApiResult<Json<Value>> {
-    authorize_control(&state, request.headers())?;
+    authorize_browser_control(&state, request.headers())?;
     let value = json_body(request).await?;
     let text = value["text"]
         .as_str()
