@@ -404,10 +404,15 @@ fn render_panel(detail: &Value, snapshot: &Value) -> String {
     let _ = write!(html,
         "<div class=\"detail-tabs\" role=\"tablist\" aria-label=\"Thread detail\"><button class=\"detail-tab\" id=\"transcript-tab-{k}\" type=\"button\" role=\"tab\" aria-selected=\"true\" aria-controls=\"transcript-panel-{k}\" data-detail-tab=\"transcript\">Transcript</button><button class=\"detail-tab\" id=\"tasks-tab-{k}\" type=\"button\" role=\"tab\" aria-selected=\"false\" aria-controls=\"todos-{k}\" data-detail-tab=\"tasks\" tabindex=\"-1\">Tasks <span class=\"tab-count\">{todo_count}</span></button></div>"
     );
-    html.push_str(&render_todos(detail, false));
     let _ = write!(
         html,
         r##"<section class="transcript-panel" id="transcript-panel-{k}" role="tabpanel" aria-labelledby="transcript-tab-{k}"><header class="transcript-toolbar"><h2 id="transcript-{k}" class="sr-only">Transcript</h2><span class="record-count"></span><span class="freshness" role="status"></span><div class="transcript-controls"><label class="search-field"><span class="sr-only">Search loaded history</span><input class="transcript-search" type="search" placeholder="Search loaded history" autocomplete="off"></label><button class="pause" type="button" aria-pressed="false">Pause</button><button class="jump" type="button" aria-pressed="true">Follow latest ↓</button></div><p class="search-count" aria-live="polite"></p></header><div class="transcript-body"><div class="transcript-scroll" tabindex="0" aria-label="Transcript records"><div class="view-error notice" role="alert" hidden></div><div class="history-notice" role="status" hidden><span></span><button class="dismiss-history" type="button">Dismiss</button></div>"##
+        "<div class=\"detail-tabs\" role=\"tablist\" aria-label=\"Thread detail\"><button class=\"detail-tab\" id=\"transcript-tab-{k}\" type=\"button\" role=\"tab\" aria-selected=\"false\" aria-controls=\"transcript-panel-{k}\" data-detail-tab=\"transcript\" tabindex=\"-1\">Transcript</button><button class=\"detail-tab\" id=\"tasks-tab-{k}\" type=\"button\" role=\"tab\" aria-selected=\"true\" aria-controls=\"todos-{k}\" data-detail-tab=\"tasks\">Tasks <span class=\"tab-count\">{todo_count}</span></button></div>"
+    );
+    html.push_str(&render_todos(detail, false));
+    let _ = write!(
+        html,
+        r##"<section class="transcript-panel" id="transcript-panel-{k}" role="tabpanel" aria-labelledby="transcript-tab-{k}" hidden><header class="transcript-toolbar"><h2 id="transcript-{k}" class="sr-only">Transcript</h2><span class="record-count"></span><span class="freshness" role="status"></span><div class="transcript-controls"><label class="search-field"><span class="sr-only">Search loaded history</span><input class="transcript-search" type="search" placeholder="Search loaded history" autocomplete="off"></label><button class="pause" type="button" aria-pressed="false">Pause</button><button class="jump" type="button" aria-pressed="true">Follow latest ↓</button></div><p class="search-count" aria-live="polite"></p></header><div class="transcript-body"><div class="transcript-scroll" tabindex="0" aria-label="Transcript records"><div class="view-error notice" role="alert" hidden></div><div class="history-notice" role="status" hidden><span></span><button class="dismiss-history" type="button">Dismiss</button></div>"##
     );
     html.push_str(&render_pager(detail, false));
     let _ = write!(html, "<div class=\"events\" id=\"events-{k}\">");
@@ -1154,9 +1159,9 @@ mod tests {
         assert!(panel.contains("class=\"new-records jump\""));
         assert!(panel.contains("class=\"transcript-search\""));
         assert!(panel.contains("class=\"detail-tabs\" role=\"tablist\""));
-        assert!(panel.contains("role=\"tab\" aria-selected=\"true\" aria-controls=\"transcript-panel-YQ\""));
-        assert!(panel.contains("aria-controls=\"todos-YQ\" data-detail-tab=\"tasks\""));
+        assert!(panel.contains("role=\"tab\" aria-selected=\"false\" aria-controls=\"transcript-panel-YQ\""));
+        assert!(panel.contains("role=\"tab\" aria-selected=\"true\" aria-controls=\"todos-YQ\" data-detail-tab=\"tasks\""));
         assert!(panel.contains("role=\"tabpanel\" aria-labelledby=\"tasks-tab-YQ\""));
-        assert!(panel.contains("id=\"transcript-panel-YQ\" role=\"tabpanel\" aria-labelledby=\"transcript-tab-YQ\""));
+        assert!(panel.contains("id=\"transcript-panel-YQ\" role=\"tabpanel\" aria-labelledby=\"transcript-tab-YQ\" hidden"));
     }
 }
