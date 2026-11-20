@@ -9,7 +9,7 @@ anyhow = "1"
 axum = { version = "0.8", features = ["query", "json", "tokio", "http1"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
 regex = "1"
 getrandom = "0.3"
@@ -17,10 +17,14 @@ hmac = "0.12"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 libc = "0.2"
 rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+ratatui = "0.29"
+crossterm = "0.28"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync"] }
+ureq = { version = "3", features = ["json"] }
+urlencoding = "2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add the read-only `threadwatch-tui` Ratatui client with Active/Past navigation, collector health, todos, loaded-history search, pause/follow controls, and paginated transcripts over the existing viewer API.
+- Replace the stacked desktop task/transcript detail with accessible per-thread tabs while preserving the mobile Todos control and transcript-first layout.
+
 ## 0.3.0
 
 - Render intent-first tool cards with readable commands, code, paths, proposed patches, API/device operations, safe raw disclosures, and explicit error/background-receipt states.
