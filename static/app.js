@@ -8,6 +8,7 @@
   let current = null;
   let mode = 'map';
   let filter = 'active';
+  let detailTab = 'tasks';
   let requestedThread = null;
   let requestedBot = null;
   const railScroll = new Map();
@@ -26,7 +27,7 @@
     paused: false, following: true, top: 0, checked: Date.now(), failed: false,
     adjusting: false, loadingOlder: false, total: Number(panel.dataset.eventCount),
     pending: 0, newBelow: 0, generationPending: false, resuming: false,
-    tasksOpen: !isMobile() && window.innerHeight >= 700, detailTab: 'transcript',
+    tasksOpen: !isMobile() && window.innerHeight >= 700,
   });
   const view = panel => {
     if (!views.has(panel)) views.set(panel, newView(panel));
@@ -279,11 +280,11 @@
       transcriptPanel.hidden = false;
       return;
     }
-    const tasks = state.detailTab === 'tasks';
+    const tasks = detailTab === 'tasks';
     todoPanel.hidden = !tasks;
     transcriptPanel.hidden = tasks;
     for (const tab of tabs) {
-      const selected = tab.dataset.detailTab === state.detailTab;
+      const selected = tab.dataset.detailTab === detailTab;
       tab.setAttribute('aria-selected', String(selected));
       tab.tabIndex = selected ? 0 : -1;
       if (selected && focus) tab.focus();
@@ -566,13 +567,13 @@
     const panel = event.target.closest('.thread-panel');
     if (!panel) return;
     const state = view(panel);
-    const detailTab = event.target.closest('.detail-tab');
-    if (detailTab) {
-      state.detailTab = detailTab.dataset.detailTab;
-      if (state.detailTab === 'tasks') state.tasksOpen = true;
+    const tabButton = event.target.closest('.detail-tab');
+    if (tabButton) {
+      detailTab = tabButton.dataset.detailTab;
+      if (detailTab === 'tasks') state.tasksOpen = true;
       refreshControls(panel);
       applyDetailTab(panel, true);
-      if (state.detailTab === 'transcript' && state.following && !$('.transcript-search', panel).value.trim()) {
+      if (detailTab === 'transcript' && state.following && !$('.transcript-search', panel).value.trim()) {
         setScroll(panel, $('.transcript-scroll', panel).scrollHeight);
       }
       return;
@@ -614,8 +615,8 @@
       event.preventDefault();
       const panel = tab.closest('.thread-panel');
       const state = view(panel);
-      state.detailTab = event.key === 'ArrowRight' || event.key === 'End' ? 'tasks' : 'transcript';
-      if (state.detailTab === 'tasks') state.tasksOpen = true;
+      detailTab = event.key === 'ArrowRight' || event.key === 'End' ? 'tasks' : 'transcript';
+      if (detailTab === 'tasks') state.tasksOpen = true;
       refreshControls(panel);
       applyDetailTab(panel, true);
       return;
