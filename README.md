@@ -25,6 +25,28 @@ cargo build --locked --release
 
 Distribute the resulting `threadwatch` executable to compatible hosts. Neither source files nor Rust are needed at runtime. Use a build matching the host architecture and system libraries.
 
+## Terminal client
+
+The same repository builds `threadwatch-tui`, a read-only Ratatui client for operators who prefer a terminal. It uses only the existing viewer endpoints; never give it the ingestion token.
+
+```sh
+cargo install --locked --path . --bin threadwatch-tui
+threadwatch-tui --url http://192.168.192.183:8787
+```
+
+`TW_URL` may supply the URL instead. The client refreshes every two seconds while retaining the last successful view through connection failures.
+
+Controls:
+
+- `j`/`k` or arrows: move through threads or select whole message cards; `Tab`: switch the focused pane.
+- `Enter`: open/close the selected message; use `j`/`k` or page keys inside the full-message reader.
+- `a` / `x`: Active or Past threads; `/`: search the current transcript view.
+- `v`: toggle between the default Messages view and diagnostic Activity records.
+- `t`: expand/collapse recorded todos; `o`: load older transcript records.
+- `p`: pause/resume selected-thread updates; `f`: select the latest message; `r`: refresh; `q`: quit.
+
+Collector health, reporting backlog, task state, todos, event counts, and transcript records remain separate signals. The transcript defaults to bounded, selectable user/assistant message cards so one long message cannot consume the viewport; Enter opens its complete text in a dedicated reader. Activity reveals tool and operational records when needed. Search covers only the current view of loaded history. The TUI is intentionally read-only and does not expose browser chat or mobile pairing controls.
+
 ## Central server
 
 Copy `deploy/server.env.example` to a private environment file owned by the service user. Use absolute paths. Create separate mode-600 ingestion and browser-session signing secret files with at least 32 random characters. Distribute the ingestion token privately to trusted bridges; keep the signing secret only on the server.

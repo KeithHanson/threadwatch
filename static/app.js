@@ -26,7 +26,7 @@
     paused: false, following: true, top: 0, checked: Date.now(), failed: false,
     adjusting: false, loadingOlder: false, total: Number(panel.dataset.eventCount),
     pending: 0, newBelow: 0, generationPending: false, resuming: false,
-    tasksOpen: !isMobile() && window.innerHeight >= 700,
+    tasksOpen: !isMobile() && window.innerHeight >= 700, detailTab: 'transcript',
   });
   const view = panel => {
     if (!views.has(panel)) views.set(panel, newView(panel));
@@ -267,6 +267,31 @@
     requestAnimationFrame(() => { state.adjusting = false; });
   }
 
+  function applyDetailTab(panel, focus = false) {
+    const state = view(panel);
+    const tabs = $$('.detail-tab', panel);
+    const todoPanel = $('.todo-panel', panel);
+    const transcriptPanel = $('.transcript-panel', panel);
+    const mobile = isMobile();
+    $('.detail-tabs', panel).hidden = mobile;
+    if (mobile) {
+      todoPanel.hidden = false;
+      transcriptPanel.hidden = false;
+      return;
+    }
+    const tasks = state.detailTab === 'tasks';
+    todoPanel.hidden = !tasks;
+    transcriptPanel.hidden = tasks;
+    for (const tab of tabs) {
+      const selected = tab.dataset.detailTab === state.detailTab;
+      tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      if (selected && focus) tab.focus();
+    }
+    const count = $$('.todo', todoPanel).length;
+    $('.tab-count', panel).textContent = String(count);
+  }
+
   function refreshControls(panel) {
     const state = view(panel);
     const searching = Boolean($('.transcript-search', panel).value.trim());
@@ -288,6 +313,7 @@
     mobileToggle?.setAttribute('aria-expanded', String(state.tasksOpen));
     if (mobileToggle) mobileToggle.textContent = state.tasksOpen ? 'Close todos' : 'Todos';
     $('.todo-panel', panel)?.classList.toggle('mobile-open', state.tasksOpen);
+    applyDetailTab(panel);
     $$('.jump', panel).forEach(button => button.setAttribute('aria-pressed', String(state.following && !searching)));
     const stale = !state.paused && Date.now() - state.checked > 15000;
     const health = state.failed || stale;
@@ -540,6 +566,17 @@
     const panel = event.target.closest('.thread-panel');
     if (!panel) return;
     const state = view(panel);
+    const detailTab = event.target.closest('.detail-tab');
+    if (detailTab) {
+      state.detailTab = detailTab.dataset.detailTab;
+      if (state.detailTab === 'tasks') state.tasksOpen = true;
+      refreshControls(panel);
+      applyDetailTab(panel, true);
+      if (state.detailTab === 'transcript' && state.following && !$('.transcript-search', panel).value.trim()) {
+        setScroll(panel, $('.transcript-scroll', panel).scrollHeight);
+      }
+      return;
+    }
     if (event.target.closest('.pause')) {
       state.paused = !state.paused;
       if (state.paused) {
@@ -572,6 +609,17 @@
   }, true);
 
   document.addEventListener('keydown', event => {
+    const tab = event.target.closest('.detail-tab');
+    if (tab && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      const panel = tab.closest('.thread-panel');
+      const state = view(panel);
+      state.detailTab = event.key === 'ArrowRight' || event.key === 'End' ? 'tasks' : 'transcript';
+      if (state.detailTab === 'tasks') state.tasksOpen = true;
+      refreshControls(panel);
+      applyDetailTab(panel, true);
+      return;
+    }
     if (!$('#thread-sidebar').classList.contains('is-open')) return;
     if (event.key === 'Escape') { event.preventDefault(); closeSidebar(); }
     if (event.key === 'Tab') {
@@ -773,6 +821,10 @@
       else if (updateMode === 'older') setScroll(panel, oldTop + scroll.scrollHeight - oldHeight);
       else setScroll(panel, updateMode === 'replace' ? 0 : oldTop);
     }
+    if (target.classList.contains('todo-panel')) {
+      const panel = target.closest('.thread-panel');
+      if (panel) refreshControls(panel);
+    }
     timestamps(target.closest('.thread-panel') || target);
   });
 
@@ -845,6 +897,7 @@
   function resize(width) {
     root.classList.toggle('is-mobile', width < 760);
     if (width >= 760) closeSidebar(false);
+    $$('.thread-panel', $('#panels')).forEach(panel => refreshControls(panel));
   }
   resize(root.getBoundingClientRect().width);
   new ResizeObserver(entries => resize(entries[0].contentRect.width)).observe(root);
