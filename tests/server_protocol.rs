@@ -652,6 +652,31 @@ fn avatar_metadata_is_strictly_validated_and_survives_storage() {
     assert_eq!(index["threads"][0]["shortTitle"], "😀".repeat(24));
 }
 
+#[test]
+fn model_metadata_is_sanitized_and_optional() {
+    let sanitizer = Sanitizer::new(vec![TOKEN.into()]);
+    let mut input = batch();
+    input["thread"]["model"] = json!("anthropic/claude-sonnet-4-5");
+    assert_eq!(
+        server::validate_ingest(&input, &sanitizer).unwrap()["thread"]["model"],
+        "anthropic/claude-sonnet-4-5"
+    );
+    input["thread"]["model"] = json!("   ");
+    assert!(
+        server::validate_ingest(&input, &sanitizer).unwrap()["thread"]
+            .get("model")
+            .is_none()
+    );
+    input["thread"]["model"] = Value::Null;
+    assert!(
+        server::validate_ingest(&input, &sanitizer).unwrap()["thread"]
+            .get("model")
+            .is_none()
+    );
+    input["thread"]["model"] = json!(42);
+    assert!(server::validate_ingest(&input, &sanitizer).is_err());
+}
+
 #[tokio::test]
 async fn heartbeat_survives_restart_and_never_persists_remote_error_details() {
     let dir = tempfile::tempdir().unwrap();

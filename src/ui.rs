@@ -107,6 +107,10 @@ fn url(input: &str) -> String {
 fn active(thread: &Value) -> bool {
     matches!(text(thread, "status"), "working" | "queued" | "waiting")
 }
+fn model_of(thread: &Value) -> &str {
+    let value = text(thread, "model").trim();
+    if value.is_empty() { "default" } else { value }
+}
 fn unknown_from_reporting_loss(thread: &Value) -> bool {
     text(thread, "status") == "unknown"
         && matches!(text(thread, "reportedStatus"), "working" | "waiting" | "queued")
@@ -344,8 +348,8 @@ fn render_map(snapshot: &Value) -> String {
         for thread in group {
             let short = if text(thread, "shortTitle").is_empty() { title(thread).chars().take(24).collect::<String>() } else { text(thread, "shortTitle").to_owned() };
             let _ = write!(
-                html, "<li class=\"map-branch\"{}><span class=\"connector\" aria-hidden=\"true\"></span><a class=\"thread-link map-thread\" {}><span class=\"map-thread-title\"><strong title=\"{}\">{}</strong>{}</span><span class=\"map-thread-facts\">{}",
-                if active(thread) { "" } else { " hidden" }, link_attrs(thread), escape(title(thread)), escape(&short), time(&thread["updatedAt"]), status_html(text(thread, "status"))
+                html, "<li class=\"map-branch\"{}><span class=\"connector\" aria-hidden=\"true\"></span><a class=\"thread-link map-thread\" {}><span class=\"map-thread-title\"><strong title=\"{}\">{}</strong>{}</span><span class=\"map-thread-facts\">{}<span class=\"thread-model\" title=\"Session model\"><span class=\"micro-label\">Model</span><span class=\"mono\">{}</span></span>",
+                if active(thread) { "" } else { " hidden" }, link_attrs(thread), escape(title(thread)), escape(&short), time(&thread["updatedAt"]), status_html(text(thread, "status")), escape(model_of(thread))
             );
             if text(thread, "status") == "unknown" && !text(thread, "reportedStatus").is_empty() {
                 let _ = write!(html, "<span class=\"warning\">last reported {}</span>", status(text(thread, "reportedStatus")).0);
@@ -434,12 +438,12 @@ fn render_meta(thread: &Value, snapshot: &Value, oob: bool) -> String {
         _ => "thread identifier (no title recorded)",
     };
     let mut html = format!(
-        "<header class=\"thread-header\" id=\"meta-{k}\"{}><div class=\"breadcrumbs\"><a class=\"map-link\" href=\"./\">← Agent map</a><span class=\"bot-name\">{}</span><span>Title from {title_source}</span></div><h1 title=\"{}\">{}</h1><div class=\"thread-metadata\"><span><span class=\"micro-label\">Task</span>{}<span class=\"muted\">updated {}</span></span><span><span class=\"micro-label\">Source</span><span class=\"mono\">{}</span>{}<span class=\"muted\">heartbeat {} · {} queued batches</span></span>",
+        "<header class=\"thread-header\" id=\"meta-{k}\"{}><div class=\"breadcrumbs\"><a class=\"map-link\" href=\"./\">← Agent map</a><span class=\"bot-name\">{}</span><span>Title from {title_source}</span></div><h1 title=\"{}\">{}</h1><div class=\"thread-metadata\"><span><span class=\"micro-label\">Task</span>{}<span class=\"muted\">updated {}</span></span><span><span class=\"micro-label\">Source</span><span class=\"mono\">{}</span>{}<span class=\"muted\">heartbeat {} · {} queued batches</span></span><span><span class=\"micro-label\">Model</span><span class=\"mono\">{}</span></span>",
         if oob { " hx-swap-oob=\"outerHTML\"" } else { "" }, escape(text(thread, "botName")),
         escape(title(thread)), escape(title(thread)), status_html(text(thread, "status")), time(&thread["updatedAt"]),
         escape(source.map(|s| text(s, "name")).unwrap_or("Unknown source")), status_html(source_status),
         source.map(|s| time(&s["lastSeenAt"])).unwrap_or_else(|| "unknown".into()),
-        source.and_then(|s| s["pendingBatches"].as_u64()).unwrap_or(0)
+        source.and_then(|s| s["pendingBatches"].as_u64()).unwrap_or(0), escape(model_of(thread))
     );
     let guild = text(thread, "guildId");
     let channel = text(thread, "channelId");
@@ -1163,5 +1167,22 @@ mod tests {
         assert!(panel.contains("role=\"tab\" aria-selected=\"true\" aria-controls=\"todos-YQ\" data-detail-tab=\"tasks\""));
         assert!(panel.contains("role=\"tabpanel\" aria-labelledby=\"tasks-tab-YQ\""));
         assert!(panel.contains("id=\"transcript-panel-YQ\" role=\"tabpanel\" aria-labelledby=\"transcript-tab-YQ\" hidden"));
+    }
+
+    #[test]
+    fn map_and_detail_show_the_session_model() {
+        let snapshot = json!({"threads":[
+            {"id":"a","botId":"b","botName":"Bot","title":"A title","shortTitle":"Short","status":"working","source":"s","updatedAt":1000,"model":"anthropic/claude-sonnet-4-5"},
+            {"id":"b","botId":"b","botName":"Bot","title":"Other","status":"completed","source":"s","updatedAt":1000}
+        ],"sources":[{"id":"s","name":"Collector","status":"ready"}]});
+        let map = render_map(&snapshot);
+        assert!(map.contains("<span class=\"thread-model\" title=\"Session model\"><span class=\"micro-label\">Model</span><span class=\"mono\">anthropic/claude-sonnet-4-5</span></span>"));
+        assert!(map.contains("<span class=\"thread-model\" title=\"Session model\"><span class=\"micro-label\">Model</span><span class=\"mono\">default</span></span>"));
+        let detail = json!({"thread":{"id":"a","botId":"b","botName":"Bot","title":"A title","status":"working","updatedAt":1000,"model":"anthropic/claude-sonnet-4-5"},"eventCount":0,"todos":[]});
+        let panel = render_panel(&detail, &snapshot);
+        assert!(panel.contains("<span class=\"micro-label\">Model</span><span class=\"mono\">anthropic/claude-sonnet-4-5</span>"));
+        let default_detail = json!({"thread":{"id":"a","botId":"b","botName":"Bot","title":"A title","status":"working","updatedAt":1000},"eventCount":0,"todos":[]});
+        let panel = render_panel(&default_detail, &snapshot);
+        assert!(panel.contains("<span class=\"micro-label\">Model</span><span class=\"mono\">default</span>"));
     }
 }
