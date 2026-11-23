@@ -1046,6 +1046,25 @@ fn render_tool_argument(html: &mut String, name: &str, field: &str, label: &str,
     }
 }
 
+fn tool_content_keys(name: &str) -> &'static [&'static str] {
+    match name {
+        "bash" | "shell" | "exec" | "command" => &["command"],
+        "eval" => &["code"],
+        "read" => &["path"],
+        "grep" => &["pattern"],
+        "glob" => &["path"],
+        "web_search" => &["query"],
+        "edit" | "ast_edit" | "apply_patch" => {
+            &["patch", "diff", "input", "content", "old_text", "new_text"]
+        }
+        "write" => &["content"],
+        "task" => &["context", "tasks"],
+        "todo" => &["text", "tasks", "todos", "items"],
+        "wait" => &["ids", "handles"],
+        _ => &[],
+    }
+}
+
 fn render_tool_input(html: &mut String, name: &str, arguments: Option<&Value>, device: bool) {
     let Some(arguments) = arguments else {
         html.push_str("<p class=\"tool-note\">Readable input unavailable; the recorded text is retained below.</p>");
@@ -1065,17 +1084,36 @@ fn render_tool_input(html: &mut String, name: &str, arguments: Option<&Value>, d
         return;
     };
     let ordered = tool_fields(name, device);
+    let content_keys = tool_content_keys(name);
+    let is_content = |key: &str| content_keys.iter().any(|&content| content == key);
+    let mut content_html = String::new();
+    let mut meta_html = String::new();
     for (field, label) in ordered {
         if let Some(value) = fields.get(*field) {
-            render_tool_argument(html, name, field, label, value);
+            let target = if is_content(field) {
+                &mut content_html
+            } else {
+                &mut meta_html
+            };
+            render_tool_argument(target, name, field, label, value);
         }
     }
     for (field, value) in fields {
         if !matches!(field.as_str(), "i" | "intent" | "title")
             && !ordered.iter().any(|(key, _)| *key == field.as_str())
         {
-            render_tool_argument(html, name, field, &field.replace('_', " "), value);
+            let label = field.replace('_', " ");
+            let target = if is_content(field.as_str()) {
+                &mut content_html
+            } else {
+                &mut meta_html
+            };
+            render_tool_argument(target, name, field, &label, value);
         }
+    }
+    html.push_str(&content_html);
+    if !meta_html.is_empty() {
+        let _ = write!(html, "<div class=\"tool-meta\">{meta_html}</div>");
     }
     if matches!(name, "bash" | "shell" | "exec" | "command")
         && fields.get("cwd").is_none_or(Value::is_null)
@@ -1485,6 +1523,33 @@ mod tests {
         );
         assert!(html.contains(&format!("<pre class=\"tool-output\">{}</pre>", escape(raw))));
         assert!(!html.contains("<script>"));
+    }
+
+    #[test]
+    fn tool_input_lays_meta_fields_out_horizontally_after_the_command() {
+        let mut html = String::new();
+        render_events(
+            &mut html,
+            &[json!({
+                "id":"call", "kind":"tool_call", "name":"bash", "intent":"Inspect the repo",
+                "arguments":{"command":"echo one\necho two\necho three", "cwd":"/tmp/<project>",
+                             "async":false, "pty":false, "timeout":120},
+                "text":"sanitized original"
+            })],
+            "safe",
+        );
+        let meta_open = html.find("<div class=\"tool-meta\">").expect("meta wrapper");
+        let command_preview = html.find("echo one").expect("command preview");
+        assert!(
+            command_preview < meta_open,
+            "command must render before the metadata row"
+        );
+        let meta = &html[meta_open..];
+        assert!(meta.contains("Working directory</span><pre class=\"tool-code\">/tmp/&lt;project&gt;"));
+        assert!(meta.contains("async</span><pre class=\"tool-code\">false"));
+        assert!(meta.contains("pty</span><pre class=\"tool-code\">false"));
+        assert!(meta.contains("timeout</span><pre class=\"tool-code\">120"));
+        assert!(!meta.contains("echo one"), "command must not repeat inside the metadata row");
     }
 
     #[test]
