@@ -23,6 +23,7 @@ fn config(path: &std::path::Path) -> Config {
         port: 8787,
         ingest_token: TOKEN.into(),
         control_token: CONTROL_TOKEN.into(),
+        withheld_details: false,
         data_dir: path.to_owned(),
     }
 }
@@ -863,14 +864,39 @@ async fn receiver_keeps_scoped_tool_records_and_never_resurrects_withheld_inputs
     }
     assert_eq!(events[0]["arguments"], json!({"command":"pwd"}));
     assert_eq!(events[2]["text"], "Output\npreserved");
-    for event in &events[3..5] {
-        assert_eq!(event["sessionId"], "session-b");
-        assert!(event["text"].as_str().unwrap().contains("[WITHHELD:"));
-        assert!(event.get("arguments").is_none());
-        assert!(event.get("intent").is_none());
-    }
+    // Legacy WITHHELD-marked records are never resurrected by structured metadata.
+    assert_eq!(events[3]["sessionId"], "session-b");
+    assert!(events[3]["text"].as_str().unwrap().contains("[WITHHELD:"));
+    assert!(events[3].get("arguments").is_none());
+    assert!(events[3].get("intent").is_none());
+    // Withholding is disabled, so sensitive-looking tool records render their sanitized details.
+    assert_eq!(events[4]["sessionId"], "session-b");
+    assert_eq!(events[4]["text"], "untrusted raw input");
+    assert_eq!(events[4]["arguments"], json!({"command":"cat /tmp/.env"}));
+    assert_eq!(events[4]["intent"], "MUST_NOT_REAPPEAR");
     assert!(events[5].get("sessionId").is_none());
     assert!(events[5].get("toolCallId").is_none());
-    assert!(!detail.to_string().contains("MUST_NOT_REAPPEAR"));
-    assert!(!detail.to_string().contains("/tmp/.env"));
+}
+#[test]
+fn sensitive_tool_records_are_withheld_when_feature_is_enabled() {
+    let sanitizer = Sanitizer::new(vec![TOKEN.into()]);
+    let mut input = batch();
+    input["events"][0] = json!({
+        "id":"sensitive", "kind":"tool_call", "timestamp":0,
+        "text":"Original tool record",
+        "arguments":{"command":"cat .env"},
+        "intent":"Inspect credential"
+    });
+    // Default behavior: withholding is disabled, sensitive details render sanitized.
+    let normalized = server::validate_ingest(&input, &sanitizer).unwrap();
+    let event = &normalized["events"][0];
+    assert_eq!(event["text"], "Original tool record");
+    assert_eq!(event["arguments"]["command"], "cat .env");
+    assert_eq!(event["intent"], "Inspect credential");
+    // Enabled: the record is withheld and its details are never resurrected.
+    let withheld = server::validate_ingest_with(&input, &sanitizer, true).unwrap();
+    let event = &withheld["events"][0];
+    assert!(event["text"].as_str().unwrap().contains("[WITHHELD:"));
+    assert!(event.get("arguments").is_none());
+    assert!(event.get("intent").is_none());
 }

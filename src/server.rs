@@ -41,6 +41,7 @@ pub struct Config {
     pub ingest_token: String,
     pub control_token: String,
     pub data_dir: PathBuf,
+    pub withheld_details: bool,
 }
 
 impl Config {
@@ -87,6 +88,7 @@ impl Config {
         let ingest_token = read_token(&env, "TW_INGEST_TOKEN")?;
         let control_token = read_token(&env, "TW_CONTROL_TOKEN")?;
         let directory = env("TW_DATA_DIR").unwrap_or_else(|| "~/.local/state/threadwatch".into());
+        let withheld_details = env("TW_WITHHELD_TOOL_DETAILS").as_deref() == Some("1");
         Ok(Self {
             local,
             lan,
@@ -96,6 +98,7 @@ impl Config {
             ingest_token,
             control_token,
             data_dir: expand_path(&directory, &env)?,
+            withheld_details,
         })
     }
 }
@@ -389,9 +392,20 @@ fn timestamp(value: &Value) -> ApiResult<Value> {
     }
     Err(ApiError::bad("Invalid event timestamp"))
 }
+/// Compatibility wrapper: validates with withholding details disabled.
+pub fn validate_ingest(
+    input: &Value,
+    sanitizer: &Sanitizer,
+) -> ApiResult<Value> {
+    validate_ingest_with(input, sanitizer, false)
+}
 
 /// Whitelists the wire schema; no raw provider fields or client history versions are persisted.
-pub fn validate_ingest(input: &Value, sanitizer: &Sanitizer) -> ApiResult<Value> {
+pub fn validate_ingest_with(
+    input: &Value,
+    sanitizer: &Sanitizer,
+    withholding_enabled: bool,
+) -> ApiResult<Value> {
     let data = input
         .get("thread")
         .filter(|data| data.is_object())
@@ -505,7 +519,7 @@ pub fn validate_ingest(input: &Value, sanitizer: &Sanitizer) -> ApiResult<Value>
                 return Err(ApiError::bad("Invalid tool intent"));
             }
         }
-        crate::sanitize::normalize_tool_metadata(event, &mut record, sanitizer);
+        crate::sanitize::normalize_tool_metadata(event, &mut record, sanitizer, withholding_enabled);
         normalized.push(record);
     }
     let mut output = json!({"thread": thread, "events": normalized});
@@ -931,7 +945,7 @@ async fn ack_command(
 }
 async fn ingest(State(state): State<Arc<AppState>>, request: Request) -> ApiResult<Json<Value>> {
     authorize(&state, request.headers())?;
-    let value = validate_ingest(&json_body(request).await?, &state.sanitizer)?;
+    let value = validate_ingest_with(&json_body(request).await?, &state.sanitizer, state.config.withheld_details)?;
     let Value::Object(mut value) = value else {
         unreachable!("validated object");
     };
