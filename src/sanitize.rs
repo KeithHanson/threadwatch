@@ -278,7 +278,12 @@ pub fn valid_tool_arguments(value: &Value) -> bool {
     value.is_object() && visit(value, 0, &mut bytes, &mut nodes)
 }
 
-pub fn normalize_tool_metadata(event: &Value, normalized: &mut Value, sanitizer: &Sanitizer) {
+pub fn normalize_tool_metadata(
+    event: &Value,
+    normalized: &mut Value,
+    sanitizer: &Sanitizer,
+    withholding_enabled: bool,
+) {
     if !matches!(
         event["kind"].as_str(),
         Some("tool_call" | "tool_start" | "tool_result")
@@ -293,14 +298,14 @@ pub fn normalize_tool_metadata(event: &Value, normalized: &mut Value, sanitizer:
             normalized[key] = json!(id);
         }
     }
-    // Withholding is authoritative: never resurrect a hidden input in another field.
+    // Legacy withheld records must never be resurrected by structured metadata.
     if event["text"]
         .as_str()
         .is_some_and(|text| text.contains("[WITHHELD:"))
     {
         return;
     }
-    if sensitive_tool_call(event) {
+    if withholding_enabled && sensitive_tool_call(event) {
         normalized["text"] =
             json!("[WITHHELD: tool arguments target a credential or instruction file]");
         return;
@@ -335,7 +340,11 @@ pub fn timestamp(value: &Value) -> u64 {
     }
 }
 
-pub fn normalize_event(event: &Value, sanitizer: &Sanitizer) -> Option<Value> {
+pub fn normalize_event(
+    event: &Value,
+    sanitizer: &Sanitizer,
+    withholding_enabled: bool,
+) -> Option<Value> {
     let kind = event["kind"].as_str()?;
     if !matches!(
         kind,
@@ -364,7 +373,7 @@ pub fn normalize_event(event: &Value, sanitizer: &Sanitizer) -> Option<Value> {
     if event["isError"] == true {
         normalized["isError"] = json!(true);
     }
-    normalize_tool_metadata(event, &mut normalized, sanitizer);
+    normalize_tool_metadata(event, &mut normalized, sanitizer, withholding_enabled);
     Some(normalized)
 }
 
@@ -372,7 +381,8 @@ pub fn operational_record(
     record: &Value,
     sanitizer: &Sanitizer,
     line: u64,
-    withheld: bool,
+    withholding_enabled: bool,
+    record_withheld: bool,
 ) -> Vec<Value> {
     let mut events = Vec::new();
     let time = record.get("timestamp").unwrap_or(&Value::Null);
@@ -381,13 +391,13 @@ pub fn operational_record(
         let Some(role @ ("user" | "assistant" | "toolResult")) = message["role"].as_str() else {
             return events;
         };
-        if withheld && role == "toolResult" {
+        if withholding_enabled && record_withheld && role == "toolResult" {
             let mut event = json!({"id": format!("{line}:withheld"), "timestamp": time, "role": role, "kind": "tool_result", "name": sanitizer.text(message["toolName"].as_str().unwrap_or("tool")), "text": "[WITHHELD: tool accessed a credential or instruction file]"});
             if message["isError"] == true {
                 event["isError"] = json!(true);
             }
             event["toolCallId"] = message["toolCallId"].clone();
-            return normalize_event(&event, sanitizer).into_iter().collect();
+            return normalize_event(&event, sanitizer, withholding_enabled).into_iter().collect();
         }
         let string_content;
         let content = if let Some(text) = message["content"].as_str() {
@@ -431,8 +441,8 @@ pub fn operational_record(
                 event["kind"] = json!("tool_call");
                 event["name"] = json!(sanitizer.text(name));
                 event["toolCallId"] = part["id"].clone();
-                event["text"] = if sensitive_tool_call(part) {
-                    json!("[WITHHELD: tool arguments target a credential or instruction file]")
+                if withholding_enabled && sensitive_tool_call(part) {
+                    event["text"] = json!("[WITHHELD: tool arguments target a credential or instruction file]");
                 } else {
                     let mut arguments = Map::new();
                     if let Some(intent) = part["intent"].as_str() {
@@ -440,15 +450,13 @@ pub fn operational_record(
                     }
                     if let Some(value) = part.get("arguments").or_else(|| part.get("args")) {
                         arguments.insert("arguments".into(), sanitizer.value(value));
-                    }
-                    if let Some(value) = part.get("arguments").or_else(|| part.get("args")) {
                         event["arguments"] = value.clone();
                     }
                     if let Some(intent) = part.get("intent") {
                         event["intent"] = intent.clone();
                     }
-                    json!(serde_json::to_string_pretty(&arguments).unwrap())
-                };
+                    event["text"] = json!(serde_json::to_string_pretty(&arguments).unwrap());
+                }
             } else {
                 continue;
             }
@@ -467,7 +475,8 @@ pub fn operational_record(
     } else if record["type"] == "custom" && record["customType"] == "tool_execution_start" {
         let data = &record["data"];
         if let Some(name) = data["toolName"].as_str() {
-            let text = if withheld || sensitive_tool_call(data) {
+            let withheld_event = withholding_enabled && (record_withheld || sensitive_tool_call(data));
+            let text = if withheld_event {
                 "[WITHHELD: tool arguments target a credential or instruction file]".to_owned()
             } else {
                 let visible: Map<String, Value> = [
@@ -483,7 +492,7 @@ pub fn operational_record(
                 sanitizer.value(&Value::Object(visible)).to_string()
             };
             let mut event = json!({"id": format!("{line}:start"), "timestamp": time, "kind": "tool_start", "name": sanitizer.text(name), "text": text, "toolCallId": data["toolCallId"]});
-            if !withheld && !sensitive_tool_call(data) {
+            if !withheld_event {
                 if let Some(arguments) = data.get("args").or_else(|| data.get("arguments")) {
                     event["arguments"] = arguments.clone();
                 }
@@ -496,6 +505,6 @@ pub fn operational_record(
     }
     events
         .into_iter()
-        .filter_map(|event| normalize_event(&event, sanitizer))
+        .filter_map(|event| normalize_event(&event, sanitizer, withholding_enabled))
         .collect()
 }
