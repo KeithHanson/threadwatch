@@ -425,6 +425,15 @@ pub fn validate_ingest(input: &Value, sanitizer: &Sanitizer) -> ApiResult<Value>
         let title = sanitizer.text(string(title, "shortTitle", 1000)?);
         thread["shortTitle"] = json!(title.trim().chars().take(24).collect::<String>());
     }
+    if let Some(model) = data.get("model").filter(|model| !model.is_null()) {
+        let model = sanitizer
+            .text(string(model, "model", 200)?)
+            .trim()
+            .to_owned();
+        if !model.is_empty() {
+            thread["model"] = json!(model);
+        }
+    }
     if !data["avatarUrl"].is_null() {
         let avatar = data["avatarUrl"].as_str()
             .filter(|url| store::valid_avatar_url(url) && sanitizer.text(url) == *url)
