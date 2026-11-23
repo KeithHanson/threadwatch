@@ -229,7 +229,12 @@ impl Store {
         Ok(id)
     }
 
-    pub fn create_command(&mut self, thread_id: &str, text: &str, created_at: i64) -> Result<Value> {
+    pub fn create_command(
+        &mut self,
+        thread_id: &str,
+        text: &str,
+        created_at: i64,
+    ) -> Result<Value> {
         let (bot_id, target_thread_id, heartbeat): (String, String, Option<String>) = self
             .db
             .query_row(
@@ -254,7 +259,9 @@ impl Store {
             params![thread_id, bot_id, target_thread_id, text, created_at],
             |row| row.get(0),
         )?;
-        Ok(json!({"id":id,"threadId":thread_id,"botId":bot_id,"targetThreadId":target_thread_id,"text":text,"createdAt":created_at,"status":"pending"}))
+        Ok(
+            json!({"id":id,"threadId":thread_id,"botId":bot_id,"targetThreadId":target_thread_id,"text":text,"createdAt":created_at,"status":"pending"}),
+        )
     }
 
     pub fn pending_commands(&self, bot_id: &str, limit: usize) -> Result<Vec<Value>> {
@@ -273,7 +280,8 @@ impl Store {
                 "createdAt": row.get::<_, i64>(4)?,
             }))
         })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     pub fn finish_command(
@@ -304,7 +312,8 @@ impl Store {
                 "error": row.get::<_, Option<String>>(4)?,
             }))
         })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     pub fn record_heartbeat(&mut self, heartbeat: &Value, received_at: i64) -> Result<()> {
@@ -313,7 +322,10 @@ impl Store {
         if let Some(error) = heartbeat.get("error") {
             payload["error"] = error.clone();
         }
-        if let Some(avatar) = heartbeat["avatarUrl"].as_str().filter(|url| valid_avatar_url(url)) {
+        if let Some(avatar) = heartbeat["avatarUrl"]
+            .as_str()
+            .filter(|url| valid_avatar_url(url))
+        {
             payload["avatarUrl"] = json!(avatar);
         }
         let tx = self

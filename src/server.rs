@@ -179,8 +179,10 @@ impl AppState {
         }
         validate_bind(config.lan, &config.host)?;
         let store = Store::open(&config.data_dir)?;
-        let sanitizer =
-            Sanitizer::new(vec![config.ingest_token.clone(), config.control_token.clone()]);
+        let sanitizer = Sanitizer::new(vec![
+            config.ingest_token.clone(),
+            config.control_token.clone(),
+        ]);
         let token_digest = Sha256::digest(config.ingest_token.as_bytes()).into();
         let control_digest = Sha256::digest(config.control_token.as_bytes()).into();
         Ok(Self {
@@ -435,7 +437,8 @@ pub fn validate_ingest(input: &Value, sanitizer: &Sanitizer) -> ApiResult<Value>
         }
     }
     if !data["avatarUrl"].is_null() {
-        let avatar = data["avatarUrl"].as_str()
+        let avatar = data["avatarUrl"]
+            .as_str()
             .filter(|url| store::valid_avatar_url(url) && sanitizer.text(url) == *url)
             .ok_or_else(|| ApiError::bad("Invalid avatarUrl"))?;
         thread["avatarUrl"] = json!(avatar);
@@ -490,11 +493,15 @@ pub fn validate_ingest(input: &Value, sanitizer: &Sanitizer) -> ApiResult<Value>
         }
         if let Some(arguments) = event.get("arguments") {
             if !crate::sanitize::valid_tool_arguments(arguments) {
-                return Err(ApiError::bad("Invalid tool arguments: expected a bounded object"));
+                return Err(ApiError::bad(
+                    "Invalid tool arguments: expected a bounded object",
+                ));
             }
         }
         if let Some(intent) = event.get("intent") {
-            if !intent.as_str().is_some_and(|text| text.encode_utf16().count() <= crate::sanitize::TOOL_INTENT_LIMIT) {
+            if !intent.as_str().is_some_and(|text| {
+                text.encode_utf16().count() <= crate::sanitize::TOOL_INTENT_LIMIT
+            }) {
                 return Err(ApiError::bad("Invalid tool intent"));
             }
         }
@@ -545,7 +552,8 @@ pub fn validate_heartbeat(input: &Value, sanitizer: &Sanitizer) -> ApiResult<Val
         .ok_or_else(|| ApiError::bad("Invalid pendingBatches"))?;
     let mut heartbeat = json!({"botId": bot, "botName": name, "status": input["status"], "pendingBatches": pending});
     if !input["avatarUrl"].is_null() {
-        let avatar = input["avatarUrl"].as_str()
+        let avatar = input["avatarUrl"]
+            .as_str()
             .filter(|url| store::valid_avatar_url(url) && sanitizer.text(url) == *url)
             .ok_or_else(|| ApiError::bad("Invalid avatarUrl"))?;
         heartbeat["avatarUrl"] = json!(avatar);
@@ -682,8 +690,7 @@ fn authorize_digest(
     configured: bool,
     message: &str,
 ) -> ApiResult<()> {
-    if configured
-        && bearer_digest(headers).is_some_and(|digest| digest_matches(&digest, expected))
+    if configured && bearer_digest(headers).is_some_and(|digest| digest_matches(&digest, expected))
     {
         return Ok(());
     }
@@ -719,16 +726,22 @@ fn control_session_valid(state: &AppState, headers: &HeaderMap, now: i64) -> boo
         return false;
     };
     if nonce.len() < 32
-        || expiry.parse::<i64>().ok().is_none_or(|expiry| expiry <= now)
-        || URL_SAFE_NO_PAD.decode(signature).ok().is_none_or(|signature| {
-            match Hmac::<Sha256>::new_from_slice(&state.control_digest) {
-                Ok(mut mac) => {
-                    mac.update(payload.as_bytes());
-                    mac.verify_slice(&signature).is_err()
-                }
-                Err(_) => true,
-            }
-        })
+        || expiry
+            .parse::<i64>()
+            .ok()
+            .is_none_or(|expiry| expiry <= now)
+        || URL_SAFE_NO_PAD
+            .decode(signature)
+            .ok()
+            .is_none_or(
+                |signature| match Hmac::<Sha256>::new_from_slice(&state.control_digest) {
+                    Ok(mut mac) => {
+                        mac.update(payload.as_bytes());
+                        mac.verify_slice(&signature).is_err()
+                    }
+                    Err(_) => true,
+                },
+            )
     {
         return false;
     }
@@ -760,7 +773,8 @@ async fn create_pairing(
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| ApiError::bad("Browser origin required"))?;
     let mut token = [0u8; 32];
-    getrandom::fill(&mut token).map_err(|_| ApiError::internal(anyhow!("Random source unavailable")))?;
+    getrandom::fill(&mut token)
+        .map_err(|_| ApiError::internal(anyhow!("Random source unavailable")))?;
     let encoded = URL_SAFE_NO_PAD.encode(token);
     let digest: [u8; 32] = Sha256::digest(encoded.as_bytes()).into();
     let expires_at = chrono::Utc::now().timestamp_millis() + PAIRING_TTL_MS;
@@ -792,7 +806,10 @@ async fn redeem_pairing(
             .ok()
             .is_none_or(|value| value.len() != 32)
     {
-        return Err(ApiError(StatusCode::GONE, "Pairing link expired or already used".into()));
+        return Err(ApiError(
+            StatusCode::GONE,
+            "Pairing link expired or already used".into(),
+        ));
     }
     let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
     let now = chrono::Utc::now().timestamp_millis();
@@ -802,10 +819,14 @@ async fn redeem_pairing(
         .remove(&digest)
         .is_some_and(|expiry| expiry > now);
     if !valid {
-        return Err(ApiError(StatusCode::GONE, "Pairing link expired or already used".into()));
+        return Err(ApiError(
+            StatusCode::GONE,
+            "Pairing link expired or already used".into(),
+        ));
     }
     let mut nonce = [0u8; 24];
-    getrandom::fill(&mut nonce).map_err(|_| ApiError::internal(anyhow!("Random source unavailable")))?;
+    getrandom::fill(&mut nonce)
+        .map_err(|_| ApiError::internal(anyhow!("Random source unavailable")))?;
     let expiry = chrono::Utc::now().timestamp() + SESSION_TTL_SECONDS;
     let payload = format!("{}.{}", URL_SAFE_NO_PAD.encode(nonce), expiry);
     let mut mac = Hmac::<Sha256>::new_from_slice(&state.control_digest)
@@ -837,7 +858,6 @@ async fn redeem_pairing(
         .body(Body::empty())
         .map_err(|_| ApiError::internal(anyhow!("Pairing response failed")))
 }
-
 
 async fn create_command(
     State(state): State<Arc<AppState>>,
@@ -984,7 +1004,10 @@ fn check_request(config: &Config, request: &Request<Body>) -> ApiResult<()> {
     if config.lan {
         let private_peer = matches!(peer, IpAddr::V4(ip) if ip.is_private());
         let allowed_host = authority.host() == config.host
-            || config.allowed_hosts.iter().any(|host| host == authority.host());
+            || config
+                .allowed_hosts
+                .iter()
+                .any(|host| host == authority.host());
         if (!peer.is_loopback() && !private_peer) || !allowed_host {
             return Err(forbidden());
         }
