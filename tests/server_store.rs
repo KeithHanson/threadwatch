@@ -21,6 +21,7 @@ fn config(path: &std::path::Path) -> Config {
         port: 8787,
         ingest_token: "migration-test-shared-secret-long-enough".into(),
         control_token: "migration-test-control-secret-long-enough".into(),
+        withheld_details: false,
         data_dir: path.to_owned(),
     }
 }

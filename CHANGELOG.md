@@ -5,6 +5,7 @@
 - Add the read-only `threadwatch-tui` Ratatui client with Active/Past navigation, collector health, todos, loaded-history search, pause/follow controls, and paginated transcripts over the existing viewer API.
 - Replace the stacked desktop task/transcript detail with accessible per-thread tabs while preserving the mobile Todos control and transcript-first layout.
 - Show the configured session model as a labeled fact in the Agent map and the thread detail metadata (`default` when no session override is set); threads ingested by current bridge versions carry the model through validation, storage, and rendering.
+- Disable withheld tool details by default; set `TW_WITHHELD_TOOL_DETAILS=1` to restore withholding of credential/instruction-file-targeting tool records. Legacy WITHHELD-marked records keep their honest fallback regardless.
 
 ## 0.3.0
 

@@ -74,6 +74,7 @@ Browser-facing asset, navigation, and htmx URLs are relative, so a reverse proxy
 | `TW_INGEST_TOKEN` | Alternative inline environment token; do not set both token options. |
 | `TW_CONTROL_TOKEN_FILE` | Private server-side secret used to sign paired-browser sessions; users never enter it. |
 | `TW_CONTROL_TOKEN` | Alternative inline session-signing secret; do not set both control-token options. |
+| `TW_WITHHELD_TOOL_DETAILS` | Optional `1` to withhold credential/instruction-file-targeting tool details; default off. |
 
 ## Bridge reporters
 
@@ -97,7 +98,7 @@ Select a thread for its recorded task list and chronological transcript. Tasks c
 
 The Chat panel sends an operator message through Threadwatch to the reporting bridge that owns the selected thread. Any browser trusted to view Threadwatch may send commands without entering or storing a control token. A desktop browser can select **Pair mobile**, display a two-minute single-use QR code, and issue the scanned browser a signed HttpOnly session cookie lasting 24 hours. Generating a newer QR invalidates any unredeemed older code. Commands remain pending until that bridge accepts or rejects them; accepted means durably admitted to the bridge turn queue, not completed by the model. Offline/unknown sources disable the composer. The bridge remains authoritative for session state, interruption, queue limits, and Discord delivery.
 
-Tool cards lead with the recorded intent and show commands, code, paths, queries, proposed patches, or task details without requiring JSON inspection. Device/API writes are distinguished from file writes. Full sanitized records remain expandable; malformed, unknown, and withheld inputs retain honest fallbacks. Result receipts do not imply success, and recognized shell background-launch receipts do not imply job completion.
+Tool cards lead with the recorded intent and show commands, code, paths, queries, proposed patches, or task details without requiring JSON inspection. Device/API writes are distinguished from file writes. Full sanitized records remain expandable; malformed and unknown inputs retain honest fallbacks, and legacy records carrying a withheld marker render an honest fallback instead of fabricating details. Result receipts do not imply success, and recognized shell background-launch receipts do not imply job completion.
 
 Calls, starts, and results combine only when the loaded records carry the same explicit session ID, tool-call ID, and tool name. Interleaved operations and reused IDs in different sessions stay separate; legacy records without both IDs are never guessed into groups. Loading older pages can complete a partial group. Search, pause counts, and pagination still count original records, while expansion, keyboard focus, and held-scroll anchors survive incoming results.
 
@@ -162,7 +163,7 @@ Use current timestamps, stable bot/thread/event IDs, and chronological events. R
 
 Thread states: `working`, `queued`, `waiting`, `completed`, `failed`, `unknown`, `stopped`. Todo states: `pending`, `in_progress`, `completed`. Event kinds: `message`, `tool_call`, `tool_start`, `tool_result`, `status`, `todo_edit`, `session_exit`, `import_error`. Never send hidden reasoning or credentials.
 
-Tool events may additionally carry `toolCallId`, `sessionId`, an `arguments` object, and `intent`. IDs are bounded to 200 UTF-16 units and intent to 4,000; structured arguments are bounded to 64 KiB, depth 30, and 4,096 nodes. These fields are sanitized before storage, and withheld arguments remain withheld rather than being restored through structured metadata. Keep the original sanitized `text` for inspection and older consumers.
+Tool events may additionally carry `toolCallId`, `sessionId`, an `arguments` object, and `intent`. IDs are bounded to 200 UTF-16 units and intent to 4,000; structured arguments are bounded to 64 KiB, depth 30, and 4,096 nodes. These fields are sanitized before storage; structured metadata that arrives as a legacy WITHHELD-marked record is never allowed to resurrect hidden details. Keep the original sanitized `text` for inspection and older consumers.
 
 The ingest credential grants write access for trusted producers; it is not a viewer token or an identity boundary between mutually untrusted bots. The service returns its encoded thread ID and revision. Read endpoints are `GET /api/threads` and `GET /api/threads/:id?limit=100&before=<cursor>`; pages are chronological, with an opaque thread-bound cursor for earlier history. The index includes `shortTitle`, `todoCount`, `todoCompleted`, `eventCount`, and a bounded `latestEvent` preview without loading full transcripts. Detail includes `eventCount` from the same stored snapshot as its records, for accurate paused-view baselines. Producers may supply a short title and a validated Discord `avatarUrl`; missing short titles fall back to the first 24 Unicode characters of the full title.
 
