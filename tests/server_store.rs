@@ -374,7 +374,9 @@ fn index_summaries_follow_updates_deduplication_and_history_replacement() {
         {"text":"Current","status":"in_progress"},
         {"text":"Later","status":"pending"}
     ]);
-    store.ingest(thread.clone(), &[first, latest.clone()], Some(&todos), None).unwrap();
+    store
+        .ingest(thread.clone(), &[first, latest.clone()], Some(&todos), None)
+        .unwrap();
     let summary = store.list().unwrap().remove(0);
     assert_eq!(summary["todoCount"], 3);
     assert_eq!(summary["todoCompleted"], 1);
@@ -386,7 +388,9 @@ fn index_summaries_follow_updates_deduplication_and_history_replacement() {
 
     thread["shortTitle"] = json!("Chosen label");
     latest["text"] = json!("\n corrected result\nignored");
-    store.ingest(thread.clone(), &[latest.clone()], None, None).unwrap();
+    store
+        .ingest(thread.clone(), &[latest.clone()], None, None)
+        .unwrap();
     let updated = store.list().unwrap().remove(0);
     assert_eq!(updated["shortTitle"], "Chosen label");
     assert_eq!(updated["eventCount"], 2);
@@ -398,23 +402,33 @@ fn index_summaries_follow_updates_deduplication_and_history_replacement() {
     assert_eq!(store.list().unwrap(), vec![updated]);
 
     let reset = json!({"id":"new-generation","reset":true});
-    store.ingest(thread.clone(), &[], None, Some(&reset)).unwrap();
+    store
+        .ingest(thread.clone(), &[], None, Some(&reset))
+        .unwrap();
     let reset_summary = store.list().unwrap().remove(0);
     assert_eq!(reset_summary["eventCount"], 0);
     assert_eq!(reset_summary["todoCount"], 0);
     assert_eq!(reset_summary["todoCompleted"], 0);
     assert!(reset_summary["latestEvent"].is_null());
     assert_eq!(reset_summary["historyVersion"], "new-generation");
-    assert_eq!(store.detail(&id, None, 1).unwrap().unwrap()["eventCount"], 0);
+    assert_eq!(
+        store.detail(&id, None, 1).unwrap().unwrap()["eventCount"],
+        0
+    );
 
-    store.ingest(thread.clone(), &[event("new")], None, None).unwrap();
+    store
+        .ingest(thread.clone(), &[event("new")], None, None)
+        .unwrap();
     store.ingest(thread, &[], None, Some(&reset)).unwrap();
     drop(store);
     let store = Store::open(directory.path()).unwrap();
     let restored = store.list().unwrap().remove(0);
     assert_eq!(restored["eventCount"], 1);
     assert_eq!(restored["latestEvent"]["id"], "new");
-    assert_eq!(store.detail(&id, None, 1).unwrap().unwrap()["eventCount"], 1);
+    assert_eq!(
+        store.detail(&id, None, 1).unwrap().unwrap()["eventCount"],
+        1
+    );
 }
 
 #[test]
