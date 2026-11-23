@@ -213,7 +213,9 @@ pub fn sensitive_tool_call(part: &Value) -> bool {
         .or_else(|| part.get("args"))
         .unwrap_or(&Value::Null);
     RULES.sensitive.is_match(&arguments.to_string())
-        || part["intent"].as_str().is_some_and(|intent| RULES.sensitive.is_match(intent))
+        || part["intent"]
+            .as_str()
+            .is_some_and(|intent| RULES.sensitive.is_match(intent))
 }
 
 pub const TOOL_ID_LIMIT: usize = 200;
@@ -230,11 +232,14 @@ pub fn valid_tool_id(value: &str, sanitizer: &Sanitizer) -> bool {
 /// Bound structured metadata independently of the full event's splittable text.
 pub fn valid_tool_arguments(value: &Value) -> bool {
     fn string_size(text: &str) -> usize {
-        2 + text.bytes().map(|byte| match byte {
-            b'"' | b'\\' => 2,
-            0..=31 => 6,
-            _ => 1,
-        }).sum::<usize>()
+        2 + text
+            .bytes()
+            .map(|byte| match byte {
+                b'"' | b'\\' => 2,
+                0..=31 => 6,
+                _ => 1,
+            })
+            .sum::<usize>()
     }
     fn visit(value: &Value, depth: usize, bytes: &mut usize, nodes: &mut usize) -> bool {
         if depth > 30 || *nodes == 0 {
@@ -246,16 +251,22 @@ pub fn valid_tool_arguments(value: &Value) -> bool {
             Value::Object(_) | Value::Array(_) => 2,
             _ => 32,
         };
-        let Some(remaining) = bytes.checked_sub(size) else { return false };
+        let Some(remaining) = bytes.checked_sub(size) else {
+            return false;
+        };
         *bytes = remaining;
         match value {
             Value::Object(items) => items.iter().all(|(key, item)| {
-                let Some(remaining) = bytes.checked_sub(string_size(key) + 2) else { return false };
+                let Some(remaining) = bytes.checked_sub(string_size(key) + 2) else {
+                    return false;
+                };
                 *bytes = remaining;
                 visit(item, depth + 1, bytes, nodes)
             }),
             Value::Array(items) => items.iter().all(|item| {
-                let Some(remaining) = bytes.checked_sub(1) else { return false };
+                let Some(remaining) = bytes.checked_sub(1) else {
+                    return false;
+                };
                 *bytes = remaining;
                 visit(item, depth + 1, bytes, nodes)
             }),
@@ -268,27 +279,41 @@ pub fn valid_tool_arguments(value: &Value) -> bool {
 }
 
 pub fn normalize_tool_metadata(event: &Value, normalized: &mut Value, sanitizer: &Sanitizer) {
-    if !matches!(event["kind"].as_str(), Some("tool_call" | "tool_start" | "tool_result")) {
+    if !matches!(
+        event["kind"].as_str(),
+        Some("tool_call" | "tool_start" | "tool_result")
+    ) {
         return;
     }
     for key in ["toolCallId", "sessionId"] {
-        if let Some(id) = event[key].as_str().filter(|id| valid_tool_id(id, sanitizer)) {
+        if let Some(id) = event[key]
+            .as_str()
+            .filter(|id| valid_tool_id(id, sanitizer))
+        {
             normalized[key] = json!(id);
         }
     }
     // Withholding is authoritative: never resurrect a hidden input in another field.
-    if event["text"].as_str().is_some_and(|text| text.contains("[WITHHELD:")) {
+    if event["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("[WITHHELD:"))
+    {
         return;
     }
     if sensitive_tool_call(event) {
-        normalized["text"] = json!("[WITHHELD: tool arguments target a credential or instruction file]");
+        normalized["text"] =
+            json!("[WITHHELD: tool arguments target a credential or instruction file]");
         return;
     }
     if matches!(event["kind"].as_str(), Some("tool_call" | "tool_start")) {
-        if let Some(arguments) = event.get("arguments").filter(|value| valid_tool_arguments(value)) {
+        if let Some(arguments) = event
+            .get("arguments")
+            .filter(|value| valid_tool_arguments(value))
+        {
             normalized["arguments"] = sanitizer.value(arguments);
         }
-        if let Some(intent) = event["intent"].as_str()
+        if let Some(intent) = event["intent"]
+            .as_str()
             .filter(|intent| intent.encode_utf16().count() <= TOOL_INTENT_LIMIT)
         {
             normalized["intent"] = json!(sanitizer.text(intent));
@@ -469,5 +494,8 @@ pub fn operational_record(
             events.push(event);
         }
     }
-    events.into_iter().filter_map(|event| normalize_event(&event, sanitizer)).collect()
+    events
+        .into_iter()
+        .filter_map(|event| normalize_event(&event, sanitizer))
+        .collect()
 }

@@ -4,6 +4,7 @@
 
 - Add the read-only `threadwatch-tui` Ratatui client with Active/Past navigation, collector health, todos, loaded-history search, pause/follow controls, and paginated transcripts over the existing viewer API.
 - Replace the stacked desktop task/transcript detail with accessible per-thread tabs while preserving the mobile Todos control and transcript-first layout.
+- Show the configured session model as a labeled fact in the Agent map and the thread detail metadata (`default` when no session override is set); threads ingested by current bridge versions carry the model through validation, storage, and rendering.
 
 ## 0.3.0
 

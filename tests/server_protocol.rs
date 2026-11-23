@@ -99,21 +99,32 @@ fn configuration_fails_closed_and_keeps_safe_loopback_default() {
         assert!(environment(&[("TW_LOCAL", "1"), ("TW_LAN", "1"), ("TW_HOST", host)]).is_ok());
     }
     assert!(environment(&[("TW_LAN", "1"), ("TW_HOST", "192.168.10.5")]).is_err());
-    assert!(environment(&[
-        ("TW_LOCAL", "1"),
-        ("TW_LAN", "1"),
-        ("TW_HOST", "192.168.10.5"),
-        ("TW_ALLOWED_HOSTS", "agent-portal.keithhanson.io, portal.example"),
-    ])
-    .is_ok());
-    for allowed_hosts in ["portal.example/path", "portal.example:443", "portal example"] {
-        assert!(environment(&[
+    assert!(
+        environment(&[
             ("TW_LOCAL", "1"),
             ("TW_LAN", "1"),
             ("TW_HOST", "192.168.10.5"),
-            ("TW_ALLOWED_HOSTS", allowed_hosts),
+            (
+                "TW_ALLOWED_HOSTS",
+                "agent-portal.keithhanson.io, portal.example"
+            ),
         ])
-        .is_err());
+        .is_ok()
+    );
+    for allowed_hosts in [
+        "portal.example/path",
+        "portal.example:443",
+        "portal example",
+    ] {
+        assert!(
+            environment(&[
+                ("TW_LOCAL", "1"),
+                ("TW_LAN", "1"),
+                ("TW_HOST", "192.168.10.5"),
+                ("TW_ALLOWED_HOSTS", allowed_hosts),
+            ])
+            .is_err()
+        );
     }
     for port in ["0", "65536", "-1", "1.5", "abc", "+8787"] {
         assert!(environment(&[("TW_LOCAL", "1"), ("TW_PORT", port)]).is_err());
@@ -361,12 +372,20 @@ async fn ingestion_authentication_body_limits_and_sanitization_precede_persisten
         .unwrap();
     assert_eq!(response.headers()["x-content-type-options"], "nosniff");
     assert_eq!(response.headers()["cache-control"], "no-store");
-    let policy = response.headers()["content-security-policy"].to_str().unwrap();
-    let directives: HashMap<_, Vec<_>> = policy.split(';').filter_map(|directive| {
-        let mut parts = directive.split_whitespace();
-        Some((parts.next()?, parts.collect()))
-    }).collect();
-    assert_eq!(directives["img-src"], ["'self'", "data:", "https://cdn.discordapp.com"]);
+    let policy = response.headers()["content-security-policy"]
+        .to_str()
+        .unwrap();
+    let directives: HashMap<_, Vec<_>> = policy
+        .split(';')
+        .filter_map(|directive| {
+            let mut parts = directive.split_whitespace();
+            Some((parts.next()?, parts.collect()))
+        })
+        .collect();
+    assert_eq!(
+        directives["img-src"],
+        ["'self'", "data:", "https://cdn.discordapp.com"]
+    );
     assert_eq!(directives["script-src"], ["'self'"]);
     assert_eq!(directives["connect-src"], ["'self'"]);
 }
@@ -411,8 +430,7 @@ async fn trusted_viewer_commands_round_trip_through_bridge_polling() {
         .0,
         StatusCode::OK
     );
-    let (status, command) =
-        send(&app, browser_post(&endpoint, &json!({"text":"Ship it"}))).await;
+    let (status, command) = send(&app, browser_post(&endpoint, &json!({"text":"Ship it"}))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(command["status"], "pending");
 
@@ -457,10 +475,12 @@ async fn one_time_pairing_creates_a_24_hour_control_session() {
         .insert("origin", "http://127.0.0.1:8787".parse().unwrap());
     let (status, pairing) = send(&app, pairing_request).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(pairing["qr"]
-        .as_str()
-        .unwrap()
-        .starts_with("data:image/svg+xml;base64,"));
+    assert!(
+        pairing["qr"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/svg+xml;base64,")
+    );
     let token = pairing["url"].as_str().unwrap().rsplit('/').next().unwrap();
     let redeem_uri = format!("/pair/{token}");
     let response = app
@@ -470,7 +490,10 @@ async fn one_time_pairing_creates_a_24_hour_control_session() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(response.headers()["location"], "/");
-    let cookie = response.headers()["set-cookie"].to_str().unwrap().to_owned();
+    let cookie = response.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .to_owned();
     assert!(cookie.contains("Max-Age=86400"));
     assert!(cookie.contains("HttpOnly"));
     assert!(cookie.contains("SameSite=Strict"));
@@ -505,10 +528,9 @@ async fn one_time_pairing_creates_a_24_hour_control_session() {
         &json!({"text":"Paired command"}),
         None,
     );
-    command.headers_mut().insert(
-        "cookie",
-        cookie.split(';').next().unwrap().parse().unwrap(),
-    );
+    command
+        .headers_mut()
+        .insert("cookie", cookie.split(';').next().unwrap().parse().unwrap());
     assert_eq!(send(&app, command).await.0, StatusCode::OK);
 }
 
@@ -600,17 +622,29 @@ fn avatar_metadata_is_strictly_validated_and_survives_storage() {
     let sanitizer = Sanitizer::new(vec![TOKEN.into()]);
     let base = "https://cdn.discordapp.com/avatars/123456789012345678/0123456789abcdef0123456789abcdef.png";
     let mut input = batch();
-    let mut heartbeat = json!({"botId":"bot","botName":"Collector","status":"ready","pendingBatches":0});
-    for avatar in [base.to_owned(), format!("{base}?size=96"),
-        base.replace("/0123456789abcdef", "/a_0123456789abcdef")]
-    {
+    let mut heartbeat =
+        json!({"botId":"bot","botName":"Collector","status":"ready","pendingBatches":0});
+    for avatar in [
+        base.to_owned(),
+        format!("{base}?size=96"),
+        base.replace("/0123456789abcdef", "/a_0123456789abcdef"),
+    ] {
         input["thread"]["avatarUrl"] = json!(avatar);
         heartbeat["avatarUrl"] = json!(avatar);
-        assert_eq!(server::validate_ingest(&input, &sanitizer).unwrap()["thread"]["avatarUrl"], avatar);
-        assert_eq!(server::validate_heartbeat(&heartbeat, &sanitizer).unwrap()["avatarUrl"], avatar);
+        assert_eq!(
+            server::validate_ingest(&input, &sanitizer).unwrap()["thread"]["avatarUrl"],
+            avatar
+        );
+        assert_eq!(
+            server::validate_heartbeat(&heartbeat, &sanitizer).unwrap()["avatarUrl"],
+            avatar
+        );
     }
     for avatar in [
-        json!("javascript:alert(1)"), json!(true), json!({}), json!(""),
+        json!("javascript:alert(1)"),
+        json!(true),
+        json!({}),
+        json!(""),
         json!(base.replace("https:", "http:")),
         json!(base.replace("cdn.discordapp.com", "cdn.discordapp.com.attacker.test")),
         json!(base.replace("cdn.discordapp.com", "user@cdn.discordapp.com")),
@@ -631,8 +665,17 @@ fn avatar_metadata_is_strictly_validated_and_survives_storage() {
     }
     input["thread"]["avatarUrl"] = Value::Null;
     heartbeat["avatarUrl"] = Value::Null;
-    assert!(server::validate_ingest(&input, &sanitizer).unwrap()["thread"].get("avatarUrl").is_none());
-    assert!(server::validate_heartbeat(&heartbeat, &sanitizer).unwrap().get("avatarUrl").is_none());
+    assert!(
+        server::validate_ingest(&input, &sanitizer).unwrap()["thread"]
+            .get("avatarUrl")
+            .is_none()
+    );
+    assert!(
+        server::validate_heartbeat(&heartbeat, &sanitizer)
+            .unwrap()
+            .get("avatarUrl")
+            .is_none()
+    );
     input["thread"]["avatarUrl"] = json!(base);
     input["thread"]["shortTitle"] = json!("😀".repeat(30));
     heartbeat["avatarUrl"] = json!(base);
@@ -641,8 +684,14 @@ fn avatar_metadata_is_strictly_validated_and_survives_storage() {
     let heartbeat = server::validate_heartbeat(&heartbeat, &sanitizer).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let mut store = threadwatch::store::Store::open(directory.path()).unwrap();
-    store.ingest(normalized["thread"].clone(), normalized["events"].as_array().unwrap(),
-        normalized.get("todos"), None).unwrap();
+    store
+        .ingest(
+            normalized["thread"].clone(),
+            normalized["events"].as_array().unwrap(),
+            normalized.get("todos"),
+            None,
+        )
+        .unwrap();
     store.record_heartbeat(&heartbeat, 1000).unwrap();
     drop(store);
     let state = AppState::new(config(directory.path())).unwrap();
@@ -650,6 +699,31 @@ fn avatar_metadata_is_strictly_validated_and_survives_storage() {
     assert_eq!(index["threads"][0]["avatarUrl"], base);
     assert_eq!(index["sources"][0]["avatarUrl"], base);
     assert_eq!(index["threads"][0]["shortTitle"], "😀".repeat(24));
+}
+
+#[test]
+fn model_metadata_is_sanitized_and_optional() {
+    let sanitizer = Sanitizer::new(vec![TOKEN.into()]);
+    let mut input = batch();
+    input["thread"]["model"] = json!("anthropic/claude-sonnet-4-5");
+    assert_eq!(
+        server::validate_ingest(&input, &sanitizer).unwrap()["thread"]["model"],
+        "anthropic/claude-sonnet-4-5"
+    );
+    input["thread"]["model"] = json!("   ");
+    assert!(
+        server::validate_ingest(&input, &sanitizer).unwrap()["thread"]
+            .get("model")
+            .is_none()
+    );
+    input["thread"]["model"] = Value::Null;
+    assert!(
+        server::validate_ingest(&input, &sanitizer).unwrap()["thread"]
+            .get("model")
+            .is_none()
+    );
+    input["thread"]["model"] = json!(42);
+    assert!(server::validate_ingest(&input, &sanitizer).is_err());
 }
 
 #[tokio::test]
@@ -716,7 +790,10 @@ fn tool_metadata_validation_bounds_and_sanitizes_untrusted_inputs() {
     assert_eq!(event["text"], "Original tool record");
     assert_eq!(event["toolCallId"], "native-call");
     assert_eq!(event["sessionId"], "native-session");
-    assert_eq!(event["arguments"]["command"], "printf '<script>alert(1)</script>'");
+    assert_eq!(
+        event["arguments"]["command"],
+        "printf '<script>alert(1)</script>'"
+    );
     assert_eq!(event["arguments"]["nested"]["apiKey"], "[REDACTED]");
     assert!(event["arguments"].get("__proto__").is_none());
     assert!(event["arguments"].get("constructor").is_none());
@@ -736,7 +813,10 @@ fn tool_metadata_validation_bounds_and_sanitizes_untrusted_inputs() {
     ] {
         let mut invalid = input.clone();
         invalid["events"][0][key] = value;
-        assert!(server::validate_ingest(&invalid, &sanitizer).is_err(), "{key}");
+        assert!(
+            server::validate_ingest(&invalid, &sanitizer).is_err(),
+            "{key}"
+        );
     }
     let mut deep = json!({});
     for _ in 0..32 {
@@ -762,11 +842,18 @@ async fn receiver_keeps_scoped_tool_records_and_never_resurrects_withheld_inputs
         {"id":"start-b","kind":"tool_start","timestamp":4,"text":"untrusted raw input","toolCallId":"same","sessionId":"session-b","arguments":{"command":"cat /tmp/.env"},"intent":"MUST_NOT_REAPPEAR"},
         {"id":"legacy","kind":"tool_result","timestamp":5,"text":"Unpaired legacy output"}
     ]);
-    assert_eq!(send(&app, post("/api/ingest", &input, Some(TOKEN))).await.0, StatusCode::OK);
+    assert_eq!(
+        send(&app, post("/api/ingest", &input, Some(TOKEN))).await.0,
+        StatusCode::OK
+    );
     drop(app);
     let app = server::router(Arc::new(AppState::new(cfg).unwrap()));
     let id = threadwatch::store::thread_id("ingest", "bot", "thread");
-    let (status, detail) = send(&app, request("GET", &format!("/api/threads/{id}"), Body::empty())).await;
+    let (status, detail) = send(
+        &app,
+        request("GET", &format!("/api/threads/{id}"), Body::empty()),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let events = detail["events"].as_array().unwrap();
     assert_eq!(events.len(), 6);
